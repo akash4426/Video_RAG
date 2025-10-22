@@ -1,0 +1,9 @@
+streamlit
+opencv-python-headless
+torch
+faiss-cpu
+numpy
+transformers
+Pillow
+tqdm
+google-generativeai

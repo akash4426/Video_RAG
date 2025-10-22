@@ -1,96 +1,123 @@
 🎥 Video RAG: Semantic Video Search & Summarization
 
-This project is a Streamlit web application that allows you to perform semantic search over video content. It uses CLIP to understand the content of video frames and FAISS for efficient similarity search, creating a powerful Video-based Retrieval-Augmented Generation (RAG) system.
+🚀 CLIP + FAISS + Gemini = Smarter Video Understanding
 
-Additionally, it integrates with the Gemini API to provide AI-powered summaries of the retrieved video segments.
+A Streamlit-based web app that lets you semantically search within videos and get AI-powered summaries — turning your videos into searchable, explainable knowledge.
 
-✨ Features
+<p align="center"> <img src="https://img.shields.io/badge/Framework-Streamlit-FF4B4B?style=for-the-badge&logo=streamlit&logoColor=white"/> <img src="https://img.shields.io/badge/Model-CLIP-blue?style=for-the-badge&logo=openai&logoColor=white"/> <img src="https://img.shields.io/badge/Search-FAISS-green?style=for-the-badge&logo=facebook&logoColor=white"/> <img src="https://img.shields.io/badge/API-Gemini AI-yellow?style=for-the-badge&logo=google&logoColor=white"/> <img src="https://img.shields.io/badge/Python-3.8+-3776AB?style=for-the-badge&logo=python&logoColor=white"/> </p>
+📚 Table of Contents
 
-Video Upload: Upload your own mp4, mov, or avi video files.
-
-Custom Frame Sampling: Adjust the sampling rate (Frames Per Second) to balance speed and accuracy.
-
-Semantic Text Search: Use natural language queries (e.g., "a person walking a dog") to find relevant moments in the video.
-
-Frame Retrieval: Instantly displays the top 3 matching frames from the video, along with their timestamps and similarity scores.
-
-AI-Powered Summaries: Uses Google's Gemini API to generate a concise summary based on your query and the content of the retrieved frames.
+✨ Features :
 
 ⚙️ How It Works
 
-The application follows a simple but powerful pipeline:
-
-Extract Frames: The uploaded video is sampled at the specified FPS, and individual frames are extracted.
-
-Generate Embeddings: Each frame is processed by the CLIP model, which generates a vector embedding that captures the semantic meaning of the image.
-
-Build Index: The frame embeddings are indexed into a FAISS vector database. This allows for ultra-fast similarity search.
-
-Retrieve: When you enter a text query, CLIP generates an embedding for the text. FAISS then compares this text embedding against all frame embeddings to find the closest matches.
-
-Summarize (Optional): The top matching frames are sent to the Gemini multimodal API, along with the original query, to generate a descriptive summary.
-
 🚀 Getting Started
-
-Prerequisites
-
-Python 3.8+
-
-A Google Gemini API Key (for the summarization feature)
-
-1. Clone the Repository
-
-git clone [https://github.com/YOUR_USERNAME/YOUR_REPO_NAME.git](https://github.com/YOUR_USERNAME/YOUR_REPO_NAME.git)
-cd YOUR_REPO_NAME
-
-
-2. Create a Virtual Environment (Recommended)
-
-# On macOS/Linux
-python3 -m venv venv
-source venv/bin/activate
-
-# On Windows
-python -m venv venv
-.\venv\Scripts\activate
-
-
-3. Install Dependencies
-
-Install all the required Python libraries using the requirements.txt file.
-
-pip install -r requirements.txt
-
-
-4. Run the Application
-
-Once the dependencies are installed, run the Streamlit app:
-
-streamlit run video_rag_gemini.py
-
-
-Your app will open automatically in your web browser.
 
 🔑 Configuration
 
-To use the AI summary feature, you must provide your Google Gemini API Key in the text input field at the top of the app.
+🧠 Key Libraries Used
 
-You can get an API key from the Google AI Studio.
+🧩 Example Use Case
 
-🛠️ Key Libraries Used
+🤝 Contributing
 
-Streamlit: For building the interactive web UI.
+🧾 License
 
-OpenCV (cv2): For video processing and frame extraction.
+💡 Author
 
-PyTorch: The deep learning framework (runs CLIP).
+✨ Features
 
-Transformers (Hugging Face): For loading the pre-trained CLIP model.
+✅ Video Upload – Supports .mp4, .mov, and .avi formats
+⚙️ Custom Frame Sampling – Adjust FPS to balance speed and detail
+🔍 Semantic Search – Query in natural language (e.g., “a person riding a horse”)
+🖼️ Frame Retrieval – Instantly shows top 3 matching frames with timestamps
+🧠 Gemini Summaries – Generates short, intelligent summaries based on your query and frames
 
-FAISS (Facebook AI): For efficient vector search.
+⚙️ How It Works
 
-Pillow (PIL): For image manipulation.
+The app follows a powerful yet simple Video RAG pipeline:
 
-Google Generative AI: For interfacing with the Gemini API.
+🎞️ Extract Frames: Sample video frames using OpenCV
 
-Feel free to contribute, open issues, or suggest improvements!
+🧩 Generate Embeddings: Encode frames using CLIP to capture visual meaning
+
+🧮 Index with FAISS: Store embeddings for ultra-fast similarity search
+
+🔎 Retrieve Matches: Compare your text query against all frame embeddings
+
+💬 Summarize (Optional): Send top frames and query to Gemini API for a natural language summary
+
+🚀 Getting Started
+🧩 Prerequisites
+
+Python 3.8+
+
+Google Gemini API Key (for AI summaries)
+
+1️⃣ Clone the Repository
+git clone https://github.com/YOUR_USERNAME/Video-RAG.git
+cd Video-RAG
+
+2️⃣ Create a Virtual Environment
+# macOS / Linux
+python3 -m venv venv
+source venv/bin/activate
+
+# Windows
+python -m venv venv
+.\venv\Scripts\activate
+
+3️⃣ Install Dependencies
+pip install -r requirements.txt
+
+4️⃣ Run the Application
+streamlit run app.py
+
+
+🌐 Your app will open automatically in your default browser.
+
+🔑 Configuration
+
+To enable the AI Summary feature:
+
+Enter your Google Gemini API Key in the input field at the top of the app.
+
+Get your key from Google AI Studio
+.
+
+🧠 Key Libraries Used
+Library	Purpose
+Streamlit	Interactive web interface
+OpenCV (cv2)	Frame extraction and processing
+PyTorch	Backend for CLIP embeddings
+Transformers (Hugging Face)	Pre-trained CLIP model
+FAISS (Facebook AI)	Vector similarity search
+Pillow (PIL)	Image manipulation
+Google Generative AI	Gemini API integration
+🧩 Example Use Case
+
+Upload a short video (e.g., “city street.mp4”)
+
+Type a query like “a red car crossing the road”
+
+Get the top 3 matching frames + timestamps
+
+Let Gemini generate a summary like:
+
+“A red sedan drives through a crowded urban street during daylight.”
+
+🎬 Demo Preview (Add Your GIF Here)
+<p align="center"> <img src="https://github.com/YOUR_USERNAME/Video-RAG/assets/demo.gif" width="700"/> </p>
+
+(Tip: Record a quick 10s screen capture using ScreenPal or Kap, then upload it to your repo as demo.gif)
+
+🤝 Contributing
+
+Contributions, pull requests, and ideas are welcome! 💡
+If you find a bug or have a feature request, please open an issue.
+
+💡 Author
+
+👤 Akash Karri
+📧 akashkarri2006@gmail.com
+
