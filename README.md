@@ -7,7 +7,7 @@ A Streamlit-based web app that lets you semantically search within videos and ge
 <p align="center"> <img src="https://img.shields.io/badge/Framework-Streamlit-FF4B4B?style=for-the-badge&logo=streamlit&logoColor=white"/> <img src="https://img.shields.io/badge/Model-CLIP-blue?style=for-the-badge&logo=openai&logoColor=white"/> <img src="https://img.shields.io/badge/Search-FAISS-green?style=for-the-badge&logo=facebook&logoColor=white"/> <img src="https://img.shields.io/badge/API-Gemini AI-yellow?style=for-the-badge&logo=google&logoColor=white"/> <img src="https://img.shields.io/badge/Python-3.8+-3776AB?style=for-the-badge&logo=python&logoColor=white"/> </p>
 📚 Table of Contents
 
-✨ Features
+✨ Features :
 
 ⚙️ How It Works
 
@@ -71,7 +71,7 @@ python -m venv venv
 pip install -r requirements.txt
 
 4️⃣ Run the Application
-streamlit run video_rag_gemini.py
+streamlit run app.py
 
 
 🌐 Your app will open automatically in your default browser.
@@ -116,16 +116,8 @@ Let Gemini generate a summary like:
 Contributions, pull requests, and ideas are welcome! 💡
 If you find a bug or have a feature request, please open an issue.
 
-🧾 License
-
-This project is licensed under the MIT License.
-See the LICENSE
- file for details.
-
 💡 Author
 
-👤 Your Name
-📧 your.email@example.com
+👤 Akash Karri
+📧 akashkarri2006@gmail.com
 
-🌐 LinkedIn
- | GitHub
