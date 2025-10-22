@@ -10,6 +10,7 @@ import os
 import time
 import google.generativeai as genai
 
+os.system("apt-get update -qq && apt-get install -y libgl1-mesa-glx libglib2.0-0 libsm6 libxrender1 libxext6 > /dev/null 2>&1")
 # --------------------------------
 # 1. Device Setup
 # --------------------------------
