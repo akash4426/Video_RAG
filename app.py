@@ -143,7 +143,7 @@ def get_gemini_summary(query, retrieved_frames, result_timestamps):
             f"You are a video analysis assistant. The user searched for: '{query}'.\n"
             f"The following {len(pil_images)} frames were retrieved at timestamps (s): "
             f"{', '.join([f'{t:.2f}' for t in result_timestamps])}.\n\n"
-            "Based only on these frames, summarize what is happening in one paragraph."
+            "Based only on these frames explain the context first and then, summarize what is happening in one paragraph."
         ] + pil_images
 
         response = model.generate_content(prompt_parts)
