@@ -125,7 +125,7 @@ def get_gemini_summary(query, retrieved_frames, result_timestamps):
 st.title("🎥 Video RAG: Semantic Search + AI Summary")
 st.write("Use natural language to search within videos using **CLIP + FAISS**, and summarize scenes using **Gemini**.")
 
-gemini_api_key = os.getenv("GEMINI_API_KEY")
+gemini_api_key = "AIzaSyBEbPbz4XlP_qkVtqaC-kqSF1-0rJ6YB0Q"
 
 uploaded_file = st.file_uploader("📁 Upload a video file", type=["mp4", "mov", "avi"])
 query = st.text_input("📝 Enter your search query", "a person walking")
