@@ -133,7 +133,7 @@ def retrieve_frames(query, index, frames, timestamps, top_k=3):
 def get_gemini_summary(query, retrieved_frames, result_timestamps):
     try:
         # Use Streamlit secrets instead of env variables
-        api_key = st.secrets["GEMINI_API_KEY"]s
+        api_key = st.secrets["GEMINI_API_KEY"]
         
         genai.configure(api_key=api_key)
         model = genai.GenerativeModel('gemini-pro-vision')  # Updated model name
