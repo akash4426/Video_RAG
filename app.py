@@ -9,6 +9,8 @@ import tempfile
 import os
 import time
 import google.generativeai as genai
+import io
+from moviepy.editor import VideoFileClip, concatenate_videoclips
 
 # --------------------------------
 # 1. Device Setup
@@ -131,7 +133,7 @@ def retrieve_frames(query, index, frames, timestamps, top_k=3):
 def get_gemini_summary(query, retrieved_frames, result_timestamps):
     try:
         # Use Streamlit secrets instead of env variables
-        api_key = st.secrets["GEMINI_API_KEY"]
+        api_key = st.secrets["GEMINI_API_KEY"]s
         
         genai.configure(api_key=api_key)
         model = genai.GenerativeModel('gemini-pro-vision')  # Updated model name
@@ -152,6 +154,37 @@ def get_gemini_summary(query, retrieved_frames, result_timestamps):
 # --------------------------------
 # 8. Streamlit UI
 # --------------------------------
+def get_clip_segments(video_path, frame_indices, timestamps, window_size=2):
+    """Extract video clips around the matched frames"""
+    try:
+        video = VideoFileClip(video_path)
+        clips = []
+        
+        for timestamp in timestamps:
+            start_time = max(0, timestamp - window_size/2)
+            end_time = min(video.duration, timestamp + window_size/2)
+            clip = video.subclip(start_time, end_time)
+            clips.append(clip)
+        
+        video.close()
+        return clips
+    except Exception as e:
+        st.error(f"Error extracting clips: {str(e)}")
+        return []
+
+def save_clip_as_bytes(clip):
+    """Convert video clip to bytes for Streamlit display"""
+    try:
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.mp4')
+        clip.write_videofile(temp_file.name, codec='libx264', audio_codec='aac', temp_audiofile='temp-audio.m4a', remove_temp=True)
+        with open(temp_file.name, 'rb') as f:
+            video_bytes = f.read()
+        os.unlink(temp_file.name)
+        return video_bytes
+    except Exception as e:
+        st.error(f"Error saving clip: {str(e)}")
+        return None
+
 def main():
     st.title("🎥 Video RAG: Semantic Search + AI Summary")
     st.write("Use natural language to search within videos using **CLIP + FAISS**, and summarize scenes using **Gemini**.")
@@ -159,6 +192,7 @@ def main():
     uploaded_file = st.file_uploader("📁 Upload a video file", type=["mp4", "mov", "avi"])
     query = st.text_input("📝 Enter your search query", "a person walking")
     sample_fps = st.slider("🎞️ Sampling FPS", 0.5, 5.0, 1.0)
+    clip_duration = st.slider("🎬 Clip Duration (seconds)", 1.0, 5.0, 2.0)
 
     if uploaded_file and query:
         with tempfile.NamedTemporaryFile(delete=False, suffix='.mp4') as tmp:
@@ -177,12 +211,22 @@ def main():
                         results, scores, result_timestamps = retrieve_frames(query, index, frames, timestamps, top_k=3)
                         end_time = time.time()
 
-                        st.success(f"✅ Found {len(results)} relevant frames in {end_time - start_time:.2f}s.")
+                        st.success(f"✅ Found {len(results)} relevant clips in {end_time - start_time:.2f}s.")
 
-                        cols = st.columns(len(results) or 1)
-                        for idx, (img, ts, score) in enumerate(zip(results, result_timestamps, scores)):
-                            with cols[idx]:
-                                st.image(Image.fromarray(img), caption=f"Rank {idx+1} | {ts:.2f}s | Score: {score:.4f}")
+                        # Get video clips
+                        clips = get_clip_segments(video_path, frame_ids, result_timestamps, window_size=clip_duration)
+                        
+                        # Display clips and frames side by side
+                        for idx, (clip, img, ts, score) in enumerate(zip(clips, results, result_timestamps, scores)):
+                            st.subheader(f"Match {idx+1} | Timestamp: {ts:.2f}s | Score: {score:.4f}")
+                            
+                            col1, col2 = st.columns(2)
+                            with col1:
+                                st.image(Image.fromarray(img), caption="Matched Frame")
+                            with col2:
+                                video_bytes = save_clip_as_bytes(clip)
+                                if video_bytes:
+                                    st.video(video_bytes)
 
                         with st.expander("🧠 AI Summary (Gemini)"):
                             if st.button("Generate Summary"):
@@ -195,6 +239,12 @@ def main():
         finally:
             if os.path.exists(video_path):
                 os.unlink(video_path)
+            # Cleanup any remaining clips
+            for clip in clips:
+                try:
+                    clip.close()
+                except:
+                    pass
 
 if __name__ == "__main__":
     main()
