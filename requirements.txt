@@ -1,13 +1,13 @@
-streamlit>=1.30.0
-torch>=2.0.0
-torchvision>=0.15.0
-transformers>=4.31.0
-faiss-cpu>=1.7.4
-opencv-python>=4.8.0
-pillow>=10.0.0
-numpy>=1.24.0
-google-generativeai>=0.3.0
-tqdm>=4.66.0
-sentencepiece
-protobuf
-moviepy>=1.0.0
+streamlit
+torch
+opencv-python
+numpy
+faiss-cpu  # Use faiss-gpu for CUDA support
+transformers
+Pillow
+moviepy
+whisper
+easyocr
+sentence-transformers
+python-dotenv
+google-generativeai
