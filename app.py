@@ -108,7 +108,7 @@ def extract_frames(video_path, sample_fps=1):
         return frames, frame_ids, timestamps
     except Exception as e:
         st.error(f"Error extracting frames: {str(e)}")
-        return,,
+        return None, None, None
 
 # --------------------------------
 # 4. NOVELTY: Text-Grounded Indexing (ASR + OCR)
