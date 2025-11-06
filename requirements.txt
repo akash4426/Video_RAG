@@ -1,13 +1,12 @@
-streamlit
-torch
-opencv-python
-numpy
-faiss-cpu  # Use faiss-gpu for CUDA support
-transformers
-Pillow
-moviepy
-whisper
-easyocr
-sentence-transformers
-python-dotenv
-google-generativeai
+streamlit==1.28.0
+torch==2.1.0
+opencv-python-headless==4.8.1.78
+numpy==1.24.3
+faiss-cpu==1.7.4
+transformers==4.34.0
+Pillow==10.0.0
+moviepy==1.0.3
+google-generativeai==0.3.0
+sentence-transformers==2.2.2
+easyocr==1.7.1
+whisper==1.1.10

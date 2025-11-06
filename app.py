@@ -10,7 +10,7 @@ import os
 import time
 import google.generativeai as genai
 import io
-from moviepy.editor import VideoFileClip, concatenate_videclips
+from moviepy.editor import VideoFileClip, concatenate_videoclips  # Note the correct spelling
 
 # --------------------------------
 # NEW DEPENDENCIES (for novelty)
@@ -338,51 +338,77 @@ def get_gemini_summary(query, retrieved_frames, retrieved_context):
 # 9. Clip Extraction (Unchanged)
 # --------------------------------
 def get_clip_segments(video_path, timestamps, window_size=2):
-    """Your original function. It's perfect."""
+    """Extract video clips around the matched timestamps"""
+    clips = []
+    video = None
+    
     try:
         video = VideoFileClip(video_path)
-        clips = []  # Initialize empty list
         
         for timestamp in timestamps:
+            # Calculate clip boundaries
             start_time = max(0, timestamp - window_size/2)
             end_time = min(video.duration, timestamp + window_size/2)
             
+            # Extract subclip
             clip = video.subclip(start_time, end_time)
             
             # Use tempfile for robust, unique filenames
             with tempfile.NamedTemporaryFile(delete=False, suffix='.mp4') as tmp_clip:
                 clip_path = tmp_clip.name
             
-            clip.write_videofile(
-                clip_path,
-                codec='libx264',
-                audio_codec='aac',
-                temp_audiofile='temp-audio.m4a',
-                remove_temp=True,
-                logger=None  # Suppress moviepy output
-            )
-            
-            with open(clip_path, 'rb') as f:
-                clip_bytes = f.read()
-            
-            clips.append({
-                'bytes': clip_bytes,
-                'path': clip_path,
-                'start': start_time,
-                'end': end_time
-            })
-            
-            os.remove(clip_path)
-            
-        video.close()
+            try:
+                clip.write_videofile(
+                    clip_path,
+                    codec='libx264',
+                    audio_codec='aac',
+                    temp_audiofile='temp-audio.m4a',
+                    remove_temp=True,
+                    logger=None,
+                    verbose=False
+                )
+                
+                with open(clip_path, 'rb') as f:
+                    clip_bytes = f.read()
+                
+                clips.append({
+                    'bytes': clip_bytes,
+                    'path': clip_path,
+                    'start': start_time,
+                    'end': end_time
+                })
+                
+            except Exception as e:
+                st.error(f"Error processing clip at {timestamp}s: {str(e)}")
+            finally:
+                if os.path.exists(clip_path):
+                    os.remove(clip_path)
+        
         return clips
+    
     except Exception as e:
-        st.error(f"Error extracting clips: {str(e)}")
-        return
+        st.error(f"Error in video processing: {str(e)}")
+        return []
+    
+    finally:
+        if video is not None:
+            try:
+                video.close()
+            except:
+                pass
 
 # --------------------------------
 # 10. Streamlit UI (Modified for new pipeline)
 # --------------------------------
+def check_dependencies():
+    try:
+        from moviepy.config import get_setting
+        if get_setting("FFMPEG_BINARY"):
+            return True
+        return False
+    except Exception:
+        return False
+
 def main():
     st.title("🎥 Novel Video RAG: Semantic Search + AI Summary")
     st.write("This app uses a **Text-Grounded** RAG pipeline. It searches vision (CLIP), audio (ASR), and on-screen text (OCR).")
@@ -392,6 +418,11 @@ def main():
         st.error("Models failed to load. Please check the console and restart.")
         return
 
+    if not check_dependencies():
+        st.error("❌ FFmpeg is not installed. Please install FFmpeg to use this app.")
+        st.code("brew install ffmpeg  # For Mac")
+        return
+    
     uploaded_file = st.file_uploader("📁 Upload a video file", type=["mp4", "mov", "avi"])
     query = st.text_input("📝 Enter your search query", "a person talking about RAG")
     
