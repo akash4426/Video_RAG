@@ -1,12 +1,40 @@
+# =========================================================
+# 0. CLEAN STARTUP BLOCK  —  quiet logs & speed cloud runtime
+# =========================================================
+import os, sys, warnings, logging
+
+# ---- Quiet noisy libraries ----
+os.environ["TOKENIZERS_PARALLELISM"] = "false"     # HuggingFace silence
+logging.getLogger("moviepy").setLevel(logging.ERROR)
+logging.getLogger("transformers").setLevel(logging.ERROR)
+logging.getLogger("ctranslate2").setLevel(logging.ERROR)
+
+# ---- Silence warnings globally ----
+warnings.filterwarnings("ignore", category=SyntaxWarning)
+warnings.filterwarnings("ignore", category=UserWarning)
+warnings.filterwarnings("ignore", message="Using a slow image processor")
+warnings.filterwarnings("ignore", message="The compute type inferred")
+
+# ---- Optional: redirect stderr (hides all red logs) ----
+class DevNull:
+    def write(self, _): pass
+    def flush(self): pass
+sys.stderr = DevNull()
+
+# ---- Optional: fix MoviePy IM path issue ----
+import moviepy.config_defaults as cfg
+cfg.IMAGEMAGICK_BINARY = None
+
+# =========================================================
+# 1. IMPORTS
+# =========================================================
 import streamlit as st
 import cv2
 import torch
 import numpy as np
 import faiss
-import os
 import time
 import tempfile
-import io
 from transformers import CLIPProcessor, CLIPModel
 from PIL import Image
 from moviepy.editor import VideoFileClip
@@ -14,7 +42,9 @@ from faster_whisper import WhisperModel
 from sentence_transformers import SentenceTransformer
 import google.generativeai as genai
 
-# Add error handling decorator
+# =========================================================
+# 2. ERROR HANDLER
+# =========================================================
 def handle_errors(func):
     def wrapper(*args, **kwargs):
         try:
@@ -24,7 +54,9 @@ def handle_errors(func):
             return None
     return wrapper
 
-# Modify device setup
+# =========================================================
+# 3. DEVICE SETUP
+# =========================================================
 @handle_errors
 def get_device():
     if torch.backends.mps.is_available():
@@ -37,35 +69,35 @@ device = get_device()
 st.sidebar.info(f"⚙️ Using device: **{str(device).upper()}**")
 
 # =========================================================
-# 2. LOAD MODELS
+# 4. LOAD MODELS
 # =========================================================
-@st.cache_resource
+@st.cache_resource(ttl=3600)
 @handle_errors
 def load_clip_model():
-    try:
-        model = CLIPModel.from_pretrained(
-            "openai/clip-vit-base-patch32", 
-            use_safetensors=True
-        ).to(device)
-        processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
-        model.eval()
-        return model, processor
-    except Exception as e:
-        st.error(f"Failed to load CLIP model: {str(e)}")
-        return None, None
+    model = CLIPModel.from_pretrained(
+        "openai/clip-vit-base-patch32",
+        use_safetensors=True
+    ).to(device)
+    processor = CLIPProcessor.from_pretrained(
+        "openai/clip-vit-base-patch32",
+        use_fast=True
+    )
+    model.eval()
+    return model, processor
 
 clip_model, processor = load_clip_model()
 
-@st.cache_resource
+@st.cache_resource(ttl=3600)
 def load_asr_model():
-    return WhisperModel("small", device="cpu")
+    # small or tiny — tiny runs faster on CPU cloud
+    return WhisperModel("tiny", device="cpu", compute_type="int8", cpu_threads=4, num_workers=1)
 
-@st.cache_resource
+@st.cache_resource(ttl=3600)
 def load_text_embedder():
     return SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
 
 # =========================================================
-# 3. FRAME EXTRACTION
+# 5. FRAME EXTRACTION
 # =========================================================
 @handle_errors
 def extract_frames(video_path, sample_fps=1):
@@ -103,7 +135,7 @@ def extract_frames(video_path, sample_fps=1):
             cap.release()
 
 # =========================================================
-# 4. CLIP EMBEDDINGS
+# 6. CLIP EMBEDDINGS
 # =========================================================
 def get_embeddings(frames, batch_size=8):
     all_feats = []
@@ -120,10 +152,11 @@ def get_embeddings(frames, batch_size=8):
     return np.vstack(all_feats).astype("float32")
 
 # =========================================================
-# 5. TEMPORAL AGGREGATION
+# 7. TEMPORAL AGGREGATION
 # =========================================================
 def aggregate_to_clips(frame_embs, ts, window_sec):
-    if len(ts)==0: return np.zeros((0,frame_embs.shape[1]),dtype="float32"),[],[]
+    if len(ts)==0:
+        return np.zeros((0,frame_embs.shape[1]),dtype="float32"),[],[]
     clips, bounds, centers = [], [], []
     i=0
     while i < len(ts):
@@ -139,7 +172,7 @@ def aggregate_to_clips(frame_embs, ts, window_sec):
     return clips,bounds,centers
 
 # =========================================================
-# 6. WHISPER + TEXT EMBEDDINGS
+# 8. WHISPER + TEXT EMBEDDINGS
 # =========================================================
 def transcribe(video_path):
     model = load_asr_model()
@@ -165,7 +198,7 @@ def nearest_seg(segs, t):
     return best
 
 # =========================================================
-# 7. FUSE VISUAL + TEXT
+# 9. FUSE VISUAL + TEXT
 # =========================================================
 def fuse_modalities(vembs, bounds, segs, tembs, wv, wt):
     fused,centers=[],[]
@@ -186,14 +219,14 @@ def fuse_modalities(vembs, bounds, segs, tembs, wv, wt):
     return np.vstack(fused),centers
 
 # =========================================================
-# 8. FAISS INDEX
+# 10. FAISS INDEX
 # =========================================================
 def build_index(embs):
     d=embs.shape[1]; faiss.normalize_L2(embs)
     idx=faiss.IndexFlatIP(d); idx.add(embs); return idx
 
 # =========================================================
-# 9. QUERY EXPANSION (optional)
+# 11. QUERY EXPANSION (optional)
 # =========================================================
 def expand_query(q):
     try:
@@ -204,7 +237,8 @@ def expand_query(q):
         r=model.generate_content(p)
         lines=[l.strip("- ").strip() for l in r.text.split("\n") if l.strip()]
         return [q]+lines[:3]
-    except Exception:return [q]
+    except Exception:
+        return [q]
 
 def encode_clip_text(q):
     ti=processor(text=[q],return_tensors="pt",padding=True).to(device)
@@ -214,7 +248,7 @@ def encode_clip_text(q):
     return t.cpu().numpy().astype("float32")
 
 # =========================================================
-# 10. GEMINI SUMMARY
+# 12. GEMINI SUMMARY
 # =========================================================
 def get_summary(q,frames,tss,texts):
     try:
@@ -231,60 +265,45 @@ def get_summary(q,frames,tss,texts):
         return f"Gemini error: {e}"
 
 # =========================================================
-# 11. CLIP EXTRACTION UTILITY
+# 13. CLIP EXTRACTION UTILITY
 # =========================================================
 @handle_errors
 def get_clip_segments(video_path, tss, win):
     clips = []
     video = None
-    
     try:
         video = VideoFileClip(video_path)
         for t in tss:
-            try:
-                start_time = max(0, t - win/2)
-                end_time = min(video.duration, t + win/2)
-                
-                subclip = video.subclip(start_time, end_time)
-                temp_path = tempfile.mktemp(suffix='.mp4')
-                
-                subclip.write_videofile(
-                    temp_path,
-                    codec="libx264",
-                    audio_codec="aac",
-                    temp_audiofile="temp-audio.m4a",
-                    remove_temp=True,
-                    logger=None,
-                    verbose=False
-                )
-                
-                with open(temp_path, "rb") as f:
-                    clip_bytes = f.read()
-                
-                clips.append({
-                    "bytes": clip_bytes,
-                    "start": start_time,
-                    "end": end_time
-                })
-                
-                if os.path.exists(temp_path):
-                    os.unlink(temp_path)
-                    
-            except Exception as e:
-                st.warning(f"Error processing clip at {t}s: {str(e)}")
-                continue
-                
+            start_time = max(0, t - win/2)
+            end_time = min(video.duration, t + win/2)
+            subclip = video.subclip(start_time, end_time)
+            temp_path = tempfile.mktemp(suffix='.mp4')
+            subclip.write_videofile(
+                temp_path,
+                codec="libx264",
+                audio_codec="aac",
+                temp_audiofile="temp-audio.m4a",
+                remove_temp=True,
+                logger=None,
+                verbose=False
+            )
+            with open(temp_path, "rb") as f:
+                clip_bytes = f.read()
+            clips.append({
+                "bytes": clip_bytes,
+                "start": start_time,
+                "end": end_time
+            })
+            if os.path.exists(temp_path):
+                os.unlink(temp_path)
         return clips
-    
     finally:
         if video is not None:
-            try:
-                video.close()
-            except:
-                pass
+            try: video.close()
+            except: pass
 
 # =========================================================
-# 12. STREAMLIT UI
+# 14. STREAMLIT UI
 # =========================================================
 def main():
     st.title("🎥 Multi-Modal Temporal Video RAG")
