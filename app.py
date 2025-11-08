@@ -82,6 +82,22 @@ from faster_whisper import WhisperModel
 from sentence_transformers import SentenceTransformer
 import google.generativeai as genai
 
+# Add this near the top of your file, after the initial imports
+def configure_moviepy():
+    """Configure MoviePy to work without ImageMagick"""
+    import moviepy.config as mpconfig
+    import moviepy.tools as mptools
+    
+    # Disable ImageMagick
+    mpconfig.IMAGEMAGICK_BINARY = None
+    
+    # Configure alternative text rendering
+    try:
+        from moviepy.video.VideoClip import TextClip
+        TextClip._FONT_FILENAMES = {}  # Reset font cache
+    except ImportError:
+        pass
+
 # =========================================================
 # 2. ERROR HANDLER
 # =========================================================
@@ -440,6 +456,30 @@ def main():
                 # Cleanup
                 if 'path' in locals() and os.path.exists(path):
                     os.unlink(path)
+
+# Add this after your imports
+def check_dependencies():
+    """Verify all required dependencies are available"""
+    try:
+        # Check ffmpeg
+        import subprocess
+        try:
+            subprocess.run(['ffmpeg', '-version'], capture_output=True, check=True)
+        except (subprocess.SubprocessError, FileNotFoundError):
+            st.error("❌ ffmpeg not found. Please install ffmpeg.")
+            return False
+            
+        # Configure MoviePy
+        configure_moviepy()
+        
+        return True
+    except Exception as e:
+        st.error(f"Dependency check failed: {str(e)}")
+        return False
+
+# Add these lines before your main() function
+if not check_dependencies():
+    st.stop()
 
 if __name__=="__main__":
     main()
