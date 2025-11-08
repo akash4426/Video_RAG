@@ -3,18 +3,29 @@ import cv2
 import torch
 import numpy as np
 import faiss
-from transformers import CLIPProcessor, CLIPModel
-from PIL import Image
-import tempfile
 import os
 import time
-import google.generativeai as genai
+import tempfile
 import io
-from moviepy.editor import VideoFileClip, concatenate_videoclips
+from transformers import CLIPProcessor, CLIPModel
+from PIL import Image
+from moviepy.editor import VideoFileClip
+from faster_whisper import WhisperModel
+from sentence_transformers import SentenceTransformer
+import google.generativeai as genai
 
-# --------------------------------
-# 1. Device Setup
-# --------------------------------
+# Add error handling decorator
+def handle_errors(func):
+    def wrapper(*args, **kwargs):
+        try:
+            return func(*args, **kwargs)
+        except Exception as e:
+            st.error(f"Error in {func.__name__}: {str(e)}")
+            return None
+    return wrapper
+
+# Modify device setup
+@handle_errors
 def get_device():
     if torch.backends.mps.is_available():
         return torch.device("mps")
@@ -25,13 +36,17 @@ def get_device():
 device = get_device()
 st.sidebar.info(f"⚙️ Using device: **{str(device).upper()}**")
 
-# --------------------------------
-# 2. Load CLIP model
-# --------------------------------
+# =========================================================
+# 2. LOAD MODELS
+# =========================================================
 @st.cache_resource
+@handle_errors
 def load_clip_model():
     try:
-        model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32", use_safetensors=True).to(device)
+        model = CLIPModel.from_pretrained(
+            "openai/clip-vit-base-patch32", 
+            use_safetensors=True
+        ).to(device)
         processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
         model.eval()
         return model, processor
@@ -41,213 +56,285 @@ def load_clip_model():
 
 clip_model, processor = load_clip_model()
 
-# --------------------------------
-# 3. Extract Frames from Video
-# --------------------------------
+@st.cache_resource
+def load_asr_model():
+    return WhisperModel("small", device="cpu")
+
+@st.cache_resource
+def load_text_embedder():
+    return SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
+
+# =========================================================
+# 3. FRAME EXTRACTION
+# =========================================================
+@handle_errors
 def extract_frames(video_path, sample_fps=1):
+    frames, ts = [], []
+    cap = None
     try:
         cap = cv2.VideoCapture(video_path)
         if not cap.isOpened():
             raise RuntimeError(f"Cannot open video {video_path}")
         
-        video_fps = cap.get(cv2.CAP_PROP_FPS)
-        if video_fps <= 0:
-            video_fps = 30  # fallback fps
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        if fps <= 0:
+            fps = 30  # fallback FPS
             
-        frame_interval = max(1, int(round(video_fps / sample_fps)))
-        
-        frames, frame_ids, timestamps = [], [], []
+        step = max(1, int(round(fps / sample_fps)))
         count = 0
-        while True:
-            ret, frame = cap.read()
-            if not ret:
-                break
-            if count % frame_interval == 0:
-                rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                timestamp = count / video_fps
-                frames.append(rgb)
-                frame_ids.append(count)
-                timestamps.append(timestamp)
-            count += 1
-        cap.release()
         
+        while True:
+            ok, frame = cap.read()
+            if not ok:
+                break
+            if count % step == 0:
+                rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                frames.append(rgb)
+                ts.append(count / fps)
+            count += 1
+            
         if not frames:
             raise ValueError("No frames extracted from video")
             
-        return frames, frame_ids, timestamps
-    except Exception as e:
-        st.error(f"Error extracting frames: {str(e)}")
-        return [], [], []
+        return frames, ts
+    
+    finally:
+        if cap is not None:
+            cap.release()
 
-# --------------------------------
-# 4. Get Frame Embeddings
-# --------------------------------
+# =========================================================
+# 4. CLIP EMBEDDINGS
+# =========================================================
 def get_embeddings(frames, batch_size=8):
+    all_feats = []
+    prog = st.progress(0, text="🔄 Embedding frames...")
+    for i in range(0, len(frames), batch_size):
+        batch = frames[i:i+batch_size]
+        inputs = processor(images=batch, return_tensors="pt", padding=True).to(device)
+        with torch.no_grad():
+            feats = clip_model.get_image_features(**inputs)
+            feats = feats / feats.norm(p=2, dim=-1, keepdim=True)
+            all_feats.append(feats.cpu().numpy())
+        prog.progress(min((i+batch_size)/len(frames),1.0))
+    prog.empty()
+    return np.vstack(all_feats).astype("float32")
+
+# =========================================================
+# 5. TEMPORAL AGGREGATION
+# =========================================================
+def aggregate_to_clips(frame_embs, ts, window_sec):
+    if len(ts)==0: return np.zeros((0,frame_embs.shape[1]),dtype="float32"),[],[]
+    clips, bounds, centers = [], [], []
+    i=0
+    while i < len(ts):
+        start_t = ts[i]; end_t = start_t + window_sec
+        j=i
+        while j < len(ts) and ts[j]<=end_t: j+=1
+        group = frame_embs[i:j]
+        clips.append(group.mean(axis=0))
+        bounds.append((start_t, ts[j-1] if j-1<len(ts) else end_t))
+        centers.append(0.5*(start_t+(ts[j-1] if j-1<len(ts) else end_t)))
+        i=j
+    clips = np.vstack(clips).astype("float32")
+    return clips,bounds,centers
+
+# =========================================================
+# 6. WHISPER + TEXT EMBEDDINGS
+# =========================================================
+def transcribe(video_path):
+    model = load_asr_model()
+    segs_it, _ = model.transcribe(video_path, beam_size=1, vad_filter=True)
+    segs=[]
+    for s in segs_it:
+        segs.append({"start":float(s.start),"end":float(s.end),"text":s.text.strip()})
+    return segs
+
+def embed_segments(segs):
+    if not segs: return np.zeros((0,384),dtype="float32")
+    model = load_text_embedder()
+    texts = [s["text"] for s in segs]
+    embs = model.encode(texts, normalize_embeddings=True)
+    return embs.astype("float32")
+
+def nearest_seg(segs, t):
+    best,bestd=-1,1e9
+    for i,s in enumerate(segs):
+        if s["start"]<=t<=s["end"]: return i
+        mid=(s["start"]+s["end"])/2; d=abs(mid-t)
+        if d<bestd:bestd=d;best=i
+    return best
+
+# =========================================================
+# 7. FUSE VISUAL + TEXT
+# =========================================================
+def fuse_modalities(vembs, bounds, segs, tembs, wv, wt):
+    fused,centers=[],[]
+    for i,(s,e) in enumerate(bounds):
+        tc=0.5*(s+e); centers.append(tc)
+        if not segs or tembs.shape[0]==0:
+            f=vembs[i]
+        else:
+            j=nearest_seg(segs,tc)
+            v,t=vembs[i],tembs[j]
+            if t.shape[0]!=v.shape[0]:
+                if t.shape[0]<v.shape[0]:
+                    t=np.pad(t,(0,v.shape[0]-t.shape[0]))
+                else:t=t[:v.shape[0]]
+            f=(wv*v+wt*t)/(wv+wt)
+        f=f/np.linalg.norm(f)
+        fused.append(f.astype("float32"))
+    return np.vstack(fused),centers
+
+# =========================================================
+# 8. FAISS INDEX
+# =========================================================
+def build_index(embs):
+    d=embs.shape[1]; faiss.normalize_L2(embs)
+    idx=faiss.IndexFlatIP(d); idx.add(embs); return idx
+
+# =========================================================
+# 9. QUERY EXPANSION (optional)
+# =========================================================
+def expand_query(q):
     try:
-        all_embeddings = []
-        progress_bar = st.progress(0, text="🔄 Generating frame embeddings...")
-        
-        for i in range(0, len(frames), batch_size):
-            batch = frames[i:i+batch_size]
-            inputs = processor(images=batch, return_tensors="pt", padding=True).to(device)
-            with torch.no_grad():
-                feats = clip_model.get_image_features(**inputs)
-                feats = feats / feats.norm(p=2, dim=-1, keepdim=True)
-                all_embeddings.append(feats.cpu().numpy())
-            progress = min((i + batch_size) / len(frames), 1.0)
-            progress_bar.progress(progress, text=f"Embedding frames... {int(progress*100)}%")
-        
-        progress_bar.empty()
-        embeddings = np.vstack(all_embeddings).astype("float32")
-        return embeddings
-    except Exception as e:
-        st.error(f"Error generating embeddings: {str(e)}")
-        return None
+        key=st.secrets["GEMINI_API_KEY"]
+        genai.configure(api_key=key)
+        model=genai.GenerativeModel("gemini-2.5-flash")
+        p=f"Expand the following query into 3 similar variants for video retrieval:\n{q}"
+        r=model.generate_content(p)
+        lines=[l.strip("- ").strip() for l in r.text.split("\n") if l.strip()]
+        return [q]+lines[:3]
+    except Exception:return [q]
 
-# --------------------------------
-# 5. Build FAISS Index
-# --------------------------------
-def build_index(embeddings):
-    d = embeddings.shape[1]
-    faiss.normalize_L2(embeddings)
-    index = faiss.IndexFlatIP(d)
-    index.add(embeddings)
-    return index
-
-# --------------------------------
-# 6. Query and Retrieve Frames
-# --------------------------------
-def retrieve_frames(query, index, frames, timestamps, top_k=3):
-    text_inputs = processor(text=[query], return_tensors="pt", padding=True).to(device)
+def encode_clip_text(q):
+    ti=processor(text=[q],return_tensors="pt",padding=True).to(device)
     with torch.no_grad():
-        text_emb = clip_model.get_text_features(**text_inputs).cpu().numpy()
-    faiss.normalize_L2(text_emb)
-    D, I = index.search(text_emb, top_k)
-    results = [frames[i] for i in I[0]]
-    result_timestamps = [timestamps[i] for i in I[0]]
-    return results, D[0], result_timestamps
+        t=clip_model.get_text_features(**ti)
+        t=t/t.norm(p=2,dim=-1,keepdim=True)
+    return t.cpu().numpy().astype("float32")
 
-# --------------------------------
-# 7. Gemini Summary
-# --------------------------------
-def get_gemini_summary(query, retrieved_frames, result_timestamps):
+# =========================================================
+# 10. GEMINI SUMMARY
+# =========================================================
+def get_summary(q,frames,tss,texts):
     try:
-        # Use Streamlit secrets instead of env variables
-        api_key = st.secrets["GEMINI_API_KEY"]
-        
-        genai.configure(api_key=api_key)
-        model = genai.GenerativeModel('gemini-2.5-flash')  # Updated model name
-        pil_images = [Image.fromarray(frame) for frame in retrieved_frames]
-
-        prompt_parts = [
-            f"You are a video analysis assistant. The user searched for: '{query}'.\n"
-            f"The following {len(pil_images)} frames were retrieved at timestamps (s): "
-            f"{', '.join([f'{t:.2f}' for t in result_timestamps])}.\n\n"
-            "Based only on these frames explain the context first and then, summarize what is happening in one paragraph."
-        ] + pil_images
-
-        response = model.generate_content(prompt_parts)
-        return response.text
+        key=st.secrets["GEMINI_API_KEY"]
+        genai.configure(api_key=key)
+        model=genai.GenerativeModel("gemini-2.5-flash")
+        imgs=[Image.fromarray(f) for f in frames]
+        txt="\n".join([f"[{t:.2f}s] {tx}" for t,tx in zip(tss,texts) if tx])
+        prompt=f"Query: {q}\nUsing visuals and transcript:\n{txt}\nSummarize scene context and key actions."
+        parts=[prompt]+imgs
+        r=model.generate_content(parts)
+        return r.text
     except Exception as e:
-        return f"⚠️ Gemini Error: {str(e)}"
+        return f"Gemini error: {e}"
 
-# --------------------------------
-# 8. Streamlit UI
-# --------------------------------
-def get_clip_segments(video_path, timestamps, window_size=2):
-    """Extract video clips around the matched timestamps"""
+# =========================================================
+# 11. CLIP EXTRACTION UTILITY
+# =========================================================
+@handle_errors
+def get_clip_segments(video_path, tss, win):
+    clips = []
+    video = None
+    
     try:
         video = VideoFileClip(video_path)
-        clips = []
-        
-        for timestamp in timestamps:
-            # Calculate clip boundaries
-            start_time = max(0, timestamp - window_size/2)
-            end_time = min(video.duration, timestamp + window_size/2)
-            
-            # Extract subclip
-            clip = video.subclip(start_time, end_time)
-            # Set filename for the clip
-            clip_path = f"temp_clip_{timestamp:.2f}.mp4"
-            
-            # Write clip to file
-            clip.write_videofile(
-                clip_path,
-                codec='libx264',
-                audio_codec='aac',
-                temp_audiofile='temp-audio.m4a',
-                remove_temp=True,
-                logger=None  # Suppress moviepy output
-            )
-            
-            # Read the clip as bytes
-            with open(clip_path, 'rb') as f:
-                clip_bytes = f.read()
-            
-            clips.append({
-                'bytes': clip_bytes,
-                'path': clip_path,
-                'start': start_time,
-                'end': end_time
-            })
-            
-            # Clean up the clip file
-            os.remove(clip_path)
-            
-        video.close()
-        return clips
-    except Exception as e:
-        st.error(f"Error extracting clips: {str(e)}")
-        return []
-
-def main():
-    st.title("🎥 Video RAG: Semantic Search + AI Summary")
-    st.write("Use natural language to search within videos using **CLIP + FAISS**")
-
-    uploaded_file = st.file_uploader("📁 Upload a video file", type=["mp4", "mov", "avi"])
-    query = st.text_input("📝 Enter your search query", "a person walking")
-    sample_fps = st.slider("🎞️ Sampling FPS", 0.5, 5.0, 1.0)
-    clip_duration = st.slider("🎬 Clip Duration (seconds)", 1.0, 5.0, 2.0)
-
-    if uploaded_file and query:
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.mp4') as tmp:
-            tmp.write(uploaded_file.read())
-            video_path = tmp.name
-
-        try:
-            with st.spinner("⏳ Processing video..."):
-                start_time = time.time()
-                frames, frame_ids, timestamps = extract_frames(video_path, sample_fps)
+        for t in tss:
+            try:
+                start_time = max(0, t - win/2)
+                end_time = min(video.duration, t + win/2)
                 
-                if frames:
-                    embeddings = get_embeddings(frames)
-                    if embeddings is not None:
-                        index = build_index(embeddings)
-                        results, scores, result_timestamps = retrieve_frames(query, index, frames, timestamps, top_k=3)
-                        end_time = time.time()
+                subclip = video.subclip(start_time, end_time)
+                temp_path = tempfile.mktemp(suffix='.mp4')
+                
+                subclip.write_videofile(
+                    temp_path,
+                    codec="libx264",
+                    audio_codec="aac",
+                    temp_audiofile="temp-audio.m4a",
+                    remove_temp=True,
+                    logger=None,
+                    verbose=False
+                )
+                
+                with open(temp_path, "rb") as f:
+                    clip_bytes = f.read()
+                
+                clips.append({
+                    "bytes": clip_bytes,
+                    "start": start_time,
+                    "end": end_time
+                })
+                
+                if os.path.exists(temp_path):
+                    os.unlink(temp_path)
+                    
+            except Exception as e:
+                st.warning(f"Error processing clip at {t}s: {str(e)}")
+                continue
+                
+        return clips
+    
+    finally:
+        if video is not None:
+            try:
+                video.close()
+            except:
+                pass
 
-                        st.success(f"✅ Found {len(results)} relevant clips in {end_time - start_time:.2f}s.")
+# =========================================================
+# 12. STREAMLIT UI
+# =========================================================
+def main():
+    st.title("🎥 Multi-Modal Temporal Video RAG")
+    st.write("Search inside videos using **CLIP + Whisper + Gemini**")
 
-                        # Get video clips
-                        clips = get_clip_segments(video_path, result_timestamps, window_size=clip_duration)
-                        
-                        # Display results
-                        for idx, (clip_data, ts, score) in enumerate(zip(clips, result_timestamps, scores)):
-                            st.subheader(f"Match {idx+1} | Timestamp: {ts:.2f}s | Score: {score:.4f}")
-                            st.video(clip_data['bytes'])
-                            st.caption(f"Clip timeframe: {clip_data['start']:.2f}s - {clip_data['end']:.2f}s")
+    up = st.file_uploader("📁 Upload a video", type=["mp4","mov","avi"])
+    q  = st.text_input("🔍 Enter query", "person talking on phone")
+    fps= st.slider("🎞 Sampling FPS",0.5,5.0,1.0)
+    win= st.slider("🎬 Clip window (sec)",1.0,5.0,2.0)
+    wv = st.slider("Weight visual",0.0,1.0,0.6,0.05)
+    wt = st.slider("Weight transcript",0.0,1.0,0.4,0.05)
+    exp= st.checkbox("Use query expansion",True)
 
-                        with st.expander("🧠 AI Summary (Gemini)"):
-                            if st.button("Generate Summary"):
-                                with st.spinner("🤖 Summarizing with Gemini..."):
-                                    summary = get_gemini_summary(query, results, result_timestamps)
-                                    st.write(summary)
+    if up and q:
+        with tempfile.NamedTemporaryFile(delete=False,suffix=".mp4") as tmp:
+            tmp.write(up.read()); path=tmp.name
+        try:
+            with st.spinner("Processing video..."):
+                frames,ts=extract_frames(path,fps)
+                frame_emb=get_embeddings(frames)
+                clip_vis,clip_bounds,centers=aggregate_to_clips(frame_emb,ts,win)
+                segs=transcribe(path)
+                txt_emb=embed_segments(segs)
+                fused,clip_centers=fuse_modalities(clip_vis,clip_bounds,segs,txt_emb,wv,wt)
+                idx=build_index(fused)
 
-        except Exception as e:
-            st.error(f"❌ An error occurred: {str(e)}")
+                queries=expand_query(q) if exp else [q]
+                hits={}
+                for qq in queries:
+                    tvec=encode_clip_text(qq)
+                    D,I=idx.search(tvec,3)
+                    for s,i in zip(D[0],I[0]): hits[i]=max(hits.get(i,0),float(s))
+                best=sorted(hits.items(),key=lambda x:x[1],reverse=True)[:3]
+                tss=[clip_centers[i] for i,_ in best]; scs=[s for _,s in best]
+
+                clips=get_clip_segments(path,tss,win)
+                st.success(f"Found {len(clips)} relevant clips.")
+                for i,(cl,tsc,sc) in enumerate(zip(clips,tss,scs)):
+                    st.subheader(f"Match {i+1} | {tsc:.2f}s | Score {sc:.3f}")
+                    st.video(cl["bytes"])
+                    st.caption(f"Clip timeframe {cl['start']:.2f}-{cl['end']:.2f}s")
+                    segtxt=segs[nearest_seg(segs,tsc)]["text"] if segs else ""
+                    if segtxt: st.caption(f"🗣 {segtxt}")
+
+                with st.expander("🧠 Gemini Summary"):
+                    if st.button("Generate Summary"):
+                        txts=[segs[nearest_seg(segs,t)]["text"] if segs else "" for t in tss]
+                        st.write(get_summary(q,[frames[0] for _ in tss],tss,txts))
         finally:
-            if os.path.exists(video_path):
-                os.unlink(video_path)
+            if os.path.exists(path): os.unlink(path)
 
-if __name__ == "__main__":
+if __name__=="__main__":
     main()
