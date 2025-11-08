@@ -16,14 +16,54 @@ warnings.filterwarnings("ignore", message="Using a slow image processor")
 warnings.filterwarnings("ignore", message="The compute type inferred")
 
 # ---- Optional: redirect stderr (hides all red logs) ----
+# =========================================================
+# CLEAN STARTUP BLOCK  —  quiet logs & speed cloud runtime
+# =========================================================
+import os, sys, warnings, logging
+
+# ---- Quiet noisy libraries ----
+os.environ["TOKENIZERS_PARALLELISM"] = "false"     # HuggingFace silence
+logging.getLogger("moviepy").setLevel(logging.ERROR)
+logging.getLogger("transformers").setLevel(logging.ERROR)
+logging.getLogger("ctranslate2").setLevel(logging.ERROR)
+
+# ---- Silence warnings globally ----
+warnings.filterwarnings("ignore", category=SyntaxWarning)
+warnings.filterwarnings("ignore", category=UserWarning)
+warnings.filterwarnings("ignore", message="Using a slow image processor")
+warnings.filterwarnings("ignore", message="The compute type inferred")
+
+# ---- Optional: redirect stderr (hides all red logs) ----
+# =========================================================
+# CLEAN STARTUP BLOCK  —  quiet logs & speed cloud runtime
+# =========================================================
+import os, sys, warnings, logging
+
+# ---- Quiet noisy libraries ----
+os.environ["TOKENIZERS_PARALLELISM"] = "false"     # HuggingFace silence
+logging.getLogger("moviepy").setLevel(logging.ERROR)
+logging.getLogger("transformers").setLevel(logging.ERROR)
+logging.getLogger("ctranslate2").setLevel(logging.ERROR)
+
+# ---- Silence warnings globally ----
+warnings.filterwarnings("ignore", category=SyntaxWarning)
+warnings.filterwarnings("ignore", category=UserWarning)
+warnings.filterwarnings("ignore", message="Using a slow image processor")
+warnings.filterwarnings("ignore", message="The compute type inferred")
+
+# ---- Optional: redirect stderr (hides all red logs) ----
 class DevNull:
     def write(self, _): pass
     def flush(self): pass
 sys.stderr = DevNull()
 
-# ---- Optional: fix MoviePy IM path issue ----
+# ---- Fix MoviePy ImageMagick binary crash ----
 import moviepy.config_defaults as cfg
-cfg.IMAGEMAGICK_BINARY = None
+cfg.IMAGEMAGICK_BINARY = "unset"
+# =========================================================
+
+# =========================================================
+
 
 # =========================================================
 # 1. IMPORTS
