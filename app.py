@@ -114,16 +114,21 @@ st.sidebar.info(f"⚙️ Using device: **{str(device).upper()}**")
 @st.cache_resource(ttl=3600)
 @handle_errors
 def load_clip_model():
-    model = CLIPModel.from_pretrained(
-        "openai/clip-vit-base-patch32",
-        use_safetensors=True
-    ).to(device)
-    processor = CLIPProcessor.from_pretrained(
-        "openai/clip-vit-base-patch32",
-        use_fast=True
-    )
-    model.eval()
-    return model, processor
+    try:
+        model = CLIPModel.from_pretrained(
+            "openai/clip-vit-base-patch32",
+            use_safetensors=True,
+            device_map="auto"  # Better device handling
+        ).to(device)
+        processor = CLIPProcessor.from_pretrained(
+            "openai/clip-vit-base-patch32",
+            use_fast=True
+        )
+        model.eval()
+        return model, processor
+    except Exception as e:
+        st.error(f"Failed to load CLIP model: {str(e)}")
+        return None, None
 
 clip_model, processor = load_clip_model()
 
@@ -349,8 +354,19 @@ def main():
     st.title("🎥 Multi-Modal Temporal Video RAG")
     st.write("Search inside videos using **CLIP + Whisper + Gemini**")
 
+    # Check dependencies first
+    if not check_dependencies():
+        st.stop()
+
     up = st.file_uploader("📁 Upload a video", type=["mp4","mov","avi"])
-    q  = st.text_input("🔍 Enter query", "person talking on phone")
+    if up and not validate_video(up):
+        st.stop()
+
+    q = st.text_input("🔍 Enter query", "person talking on phone")
+    if not q:
+        st.warning("Please enter a search query")
+        st.stop()
+
     fps= st.slider("🎞 Sampling FPS",0.5,5.0,1.0)
     win= st.slider("🎬 Clip window (sec)",1.0,5.0,2.0)
     wv = st.slider("Weight visual",0.0,1.0,0.6,0.05)
@@ -358,12 +374,38 @@ def main():
     exp= st.checkbox("Use query expansion",True)
 
     if up and q:
-        with tempfile.NamedTemporaryFile(delete=False,suffix=".mp4") as tmp:
-            tmp.write(up.read()); path=tmp.name
-        try:
-            with st.spinner("Processing video..."):
-                frames,ts=extract_frames(path,fps)
-                frame_emb=get_embeddings(frames)
+        with st.spinner("Processing video..."):
+            try:
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp:
+                    tmp.write(up.read())
+                    path = tmp.name
+
+                # Process video in chunks to avoid memory issues
+                frames, ts = extract_frames(path, fps)
+                if not frames:
+                    st.error("No frames could be extracted from the video")
+                    st.stop()
+
+                # Add progress indicators
+                progress = st.progress(0)
+                status = st.empty()
+
+                # Process in steps
+                steps = [
+                    ("Extracting visual features", lambda: get_embeddings(frames)),
+                    ("Aggregating clips", lambda: aggregate_to_clips(frame_emb, ts, win)),
+                    ("Transcribing audio", lambda: transcribe(path)),
+                    ("Embedding text", lambda: embed_segments(segs))
+                ]
+
+                for i, (msg, func) in enumerate(steps):
+                    status.text(msg)
+                    progress.progress((i + 1) / len(steps))
+                    result = func()
+                    if result is None:
+                        st.error(f"Failed during: {msg}")
+                        st.stop()
+
                 clip_vis,clip_bounds,centers=aggregate_to_clips(frame_emb,ts,win)
                 segs=transcribe(path)
                 txt_emb=embed_segments(segs)
@@ -392,8 +434,12 @@ def main():
                     if st.button("Generate Summary"):
                         txts=[segs[nearest_seg(segs,t)]["text"] if segs else "" for t in tss]
                         st.write(get_summary(q,[frames[0] for _ in tss],tss,txts))
-        finally:
-            if os.path.exists(path): os.unlink(path)
+            except Exception as e:
+                st.error(f"An error occurred: {str(e)}")
+            finally:
+                # Cleanup
+                if 'path' in locals() and os.path.exists(path):
+                    os.unlink(path)
 
 if __name__=="__main__":
     main()
