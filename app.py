@@ -82,21 +82,20 @@ from faster_whisper import WhisperModel
 from sentence_transformers import SentenceTransformer
 import google.generativeai as genai
 
-# Add this near the top of your file, after the initial imports
+# Add this near the top of your imports
+import os
+os.environ['IMAGEIO_FFMPEG_EXE'] = 'ffmpeg'
+
+# Replace the existing MoviePy config with:
 def configure_moviepy():
-    """Configure MoviePy to work without ImageMagick"""
-    import moviepy.config as mpconfig
-    import moviepy.tools as mptools
-    
-    # Disable ImageMagick
-    mpconfig.IMAGEMAGICK_BINARY = None
-    
-    # Configure alternative text rendering
+    """Configure MoviePy without ImageMagick dependency"""
     try:
-        from moviepy.video.VideoClip import TextClip
-        TextClip._FONT_FILENAMES = {}  # Reset font cache
-    except ImportError:
-        pass
+        import moviepy.config as mpconfig
+        mpconfig.change_settings({"IMAGEMAGICK_BINARY": None})
+        return True
+    except Exception as e:
+        st.error(f"MoviePy configuration failed: {str(e)}")
+        return False
 
 # =========================================================
 # 2. ERROR HANDLER
