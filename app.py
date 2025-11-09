@@ -136,7 +136,7 @@ def get_gemini_summary(query, retrieved_frames, result_timestamps):
         api_key = st.secrets["GEMINI_API_KEY"]
         
         genai.configure(api_key=api_key)
-        model = genai.GenerativeModel('gemini-pro-vision')  # Updated model name
+        model = genai.GenerativeModel('gemini-2.5-flash')  # Updated model name
         pil_images = [Image.fromarray(frame) for frame in retrieved_frames]
 
         prompt_parts = [
