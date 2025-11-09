@@ -10,10 +10,7 @@ import os
 import time
 import google.generativeai as genai
 import io
-import base64
-import warnings
-
-warnings.filterwarnings('ignore', category=FutureWarning)
+from moviepy.editor import VideoFileClip, concatenate_videoclips
 
 # --------------------------------
 # 1. Device Setup
@@ -34,16 +31,8 @@ st.sidebar.info(f"⚙️ Using device: **{str(device).upper()}**")
 @st.cache_resource
 def load_clip_model():
     try:
-        model = CLIPModel.from_pretrained(
-            "openai/clip-vit-base-patch32",
-            use_safetensors=True
-        ).to(device)
-        
-        processor = CLIPProcessor.from_pretrained(
-            "openai/clip-vit-base-patch32",
-            use_fast=True  # use_fast is only for the processor
-        )
-        
+        model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32", use_safetensors=True).to(device)
+        processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
         model.eval()
         return model, processor
     except Exception as e:
@@ -147,14 +136,14 @@ def get_gemini_summary(query, retrieved_frames, result_timestamps):
         api_key = st.secrets["GEMINI_API_KEY"]
         
         genai.configure(api_key=api_key)
-        model = genai.GenerativeModel('gemini-2.5-flash')  # Updated model name
+        model = genai.GenerativeModel('gemini-pro-vision')  # Updated model name
         pil_images = [Image.fromarray(frame) for frame in retrieved_frames]
 
         prompt_parts = [
             f"You are a video analysis assistant. The user searched for: '{query}'.\n"
             f"The following {len(pil_images)} frames were retrieved at timestamps (s): "
             f"{', '.join([f'{t:.2f}' for t in result_timestamps])}.\n\n"
-            "Based only on these frames explain the context first and then, summarize what is happening in one paragraph."
+            "Based only on these frames, summarize what is happening in one paragraph."
         ] + pil_images
 
         response = model.generate_content(prompt_parts)
@@ -166,107 +155,54 @@ def get_gemini_summary(query, retrieved_frames, result_timestamps):
 # 8. Streamlit UI
 # --------------------------------
 def get_clip_segments(video_path, timestamps, window_size=2):
-    """Extract video segments using OpenCV with improved encoder handling"""
+    """Extract video clips around the matched timestamps"""
     try:
-        cap = cv2.VideoCapture(video_path)
-        if not cap.isOpened():
-            raise RuntimeError(f"Cannot open video {video_path}")
-            
-        fps = cap.get(cv2.CAP_PROP_FPS)
+        video = VideoFileClip(video_path)
         clips = []
         
-        for ts in timestamps:
-            start_frame = int(max(0, (ts - window_size/2) * fps))
-            end_frame = int(min(cap.get(cv2.CAP_PROP_FRAME_COUNT), (ts + window_size/2) * fps))
+        for timestamp in timestamps:
+            # Calculate clip boundaries
+            start_time = max(0, timestamp - window_size/2)
+            end_time = min(video.duration, timestamp + window_size/2)
             
-            # Create temporary file path
-            with tempfile.NamedTemporaryFile(delete=False, suffix='.mp4') as tmp:
-                temp_path = tmp.name
+            # Extract subclip
+            clip = video.subclip(start_time, end_time)
+            # Set filename for the clip
+            clip_path = f"temp_clip_{timestamp:.2f}.mp4"
             
-            # Try different codec combinations
-            codecs = [
-                ('mp4v', '.mp4'),
-                ('avc1', '.mp4'),
-                ('XVID', '.avi'),
-                ('MJPG', '.avi')
-            ]
+            # Write clip to file
+            clip.write_videofile(
+                clip_path,
+                codec='libx264',
+                audio_codec='aac',
+                temp_audiofile='temp-audio.m4a',
+                remove_temp=True,
+                logger=None  # Suppress moviepy output
+            )
             
-            success = False
-            for codec, ext in codecs:
-                try:
-                    fourcc = cv2.VideoWriter_fourcc(*codec)
-                    out = cv2.VideoWriter(
-                        temp_path, 
-                        fourcc, 
-                        fps, 
-                        (int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
-                         int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)))
-                    )
-                    
-                    if out.isOpened():
-                        success = True
-                        break
-                except:
-                    continue
+            # Read the clip as bytes
+            with open(clip_path, 'rb') as f:
+                clip_bytes = f.read()
             
-            if not success:
-                st.error("Failed to initialize video writer with any codec")
-                continue
+            clips.append({
+                'bytes': clip_bytes,
+                'path': clip_path,
+                'start': start_time,
+                'end': end_time
+            })
             
-            cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
-            frames_written = 0
+            # Clean up the clip file
+            os.remove(clip_path)
             
-            for _ in range(start_frame, end_frame):
-                ret, frame = cap.read()
-                if not ret:
-                    break
-                out.write(frame)
-                frames_written += 1
-            
-            out.release()
-            
-            if frames_written > 0:
-                # Read the clip as bytes
-                with open(temp_path, 'rb') as f:
-                    clip_bytes = f.read()
-                
-                clips.append({
-                    'bytes': clip_bytes,
-                    'start': ts - window_size/2,
-                    'end': ts + window_size/2
-                })
-            
-            # Cleanup
-            if os.path.exists(temp_path):
-                os.unlink(temp_path)
-                
-        cap.release()
+        video.close()
         return clips
-        
     except Exception as e:
         st.error(f"Error extracting clips: {str(e)}")
         return []
 
-def clear_cache():
-    """Clear all Streamlit cache including uploaded files"""
-    st.cache_data.clear()
-    st.cache_resource.clear()
-    st.session_state.clear()
-    st.cache_data.clear()
-    return "🧹 Cache cleared!"
-
 def main():
-    # Add this at the top of main(), after the title
     st.title("🎥 Video RAG: Semantic Search + AI Summary")
     st.write("Use natural language to search within videos using **CLIP + FAISS**")
-
-    # Add cache clearing button in sidebar
-    with st.sidebar:
-        if st.button("🧹 Clear Cache"):
-            message = clear_cache()
-            st.success(message)
-            time.sleep(1)  # Give time for success message
-            st.rerun()  # Rerun the app to reflect cleared state
 
     uploaded_file = st.file_uploader("📁 Upload a video file", type=["mp4", "mov", "avi"])
     query = st.text_input("📝 Enter your search query", "a person walking")
@@ -279,6 +215,7 @@ def main():
             video_path = tmp.name
 
         try:
+            with st.spinner("⏳ Processing video..."):
                 start_time = time.time()
                 frames, frame_ids, timestamps = extract_frames(video_path, sample_fps)
                 
