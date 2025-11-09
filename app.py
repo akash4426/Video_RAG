@@ -35,14 +35,15 @@ st.sidebar.info(f"⚙️ Using device: **{str(device).upper()}**")
 def load_clip_model():
     try:
         model = CLIPModel.from_pretrained(
-            "openai/clip-vit-base-patch32", 
-            use_safetensors=True,
-            use_fast=True  # Add this parameter
+            "openai/clip-vit-base-patch32",
+            use_safetensors=True
         ).to(device)
+        
         processor = CLIPProcessor.from_pretrained(
             "openai/clip-vit-base-patch32",
-            use_fast=True  # Add this parameter
+            use_fast=True  # use_fast is only for the processor
         )
+        
         model.eval()
         return model, processor
     except Exception as e:
