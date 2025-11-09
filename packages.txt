@@ -1,0 +1,4 @@
+ffmpeg
+libgl1
+python3-opencv
+x264

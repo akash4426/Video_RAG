@@ -11,6 +11,9 @@ import time
 import google.generativeai as genai
 import io
 import base64
+import warnings
+
+warnings.filterwarnings('ignore', category=FutureWarning)
 
 # --------------------------------
 # 1. Device Setup
@@ -31,8 +34,15 @@ st.sidebar.info(f"⚙️ Using device: **{str(device).upper()}**")
 @st.cache_resource
 def load_clip_model():
     try:
-        model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32", use_safetensors=True).to(device)
-        processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
+        model = CLIPModel.from_pretrained(
+            "openai/clip-vit-base-patch32", 
+            use_safetensors=True,
+            use_fast=True  # Add this parameter
+        ).to(device)
+        processor = CLIPProcessor.from_pretrained(
+            "openai/clip-vit-base-patch32",
+            use_fast=True  # Add this parameter
+        )
         model.eval()
         return model, processor
     except Exception as e:
@@ -155,7 +165,7 @@ def get_gemini_summary(query, retrieved_frames, result_timestamps):
 # 8. Streamlit UI
 # --------------------------------
 def get_clip_segments(video_path, timestamps, window_size=2):
-    """Extract video segments using pure OpenCV"""
+    """Extract video segments using OpenCV with improved encoder handling"""
     try:
         cap = cv2.VideoCapture(video_path)
         if not cap.isOpened():
@@ -172,15 +182,35 @@ def get_clip_segments(video_path, timestamps, window_size=2):
             with tempfile.NamedTemporaryFile(delete=False, suffix='.mp4') as tmp:
                 temp_path = tmp.name
             
-            # Configure video writer
-            fourcc = cv2.VideoWriter_fourcc(*'avc1')  # Using H.264 codec
-            out = cv2.VideoWriter(
-                temp_path, 
-                fourcc, 
-                fps, 
-                (int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
-                 int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)))
-            )
+            # Try different codec combinations
+            codecs = [
+                ('mp4v', '.mp4'),
+                ('avc1', '.mp4'),
+                ('XVID', '.avi'),
+                ('MJPG', '.avi')
+            ]
+            
+            success = False
+            for codec, ext in codecs:
+                try:
+                    fourcc = cv2.VideoWriter_fourcc(*codec)
+                    out = cv2.VideoWriter(
+                        temp_path, 
+                        fourcc, 
+                        fps, 
+                        (int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
+                         int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)))
+                    )
+                    
+                    if out.isOpened():
+                        success = True
+                        break
+                except:
+                    continue
+            
+            if not success:
+                st.error("Failed to initialize video writer with any codec")
+                continue
             
             cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
             frames_written = 0
