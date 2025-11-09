@@ -200,9 +200,26 @@ def get_clip_segments(video_path, timestamps, window_size=2):
         st.error(f"Error extracting clips: {str(e)}")
         return []
 
+def clear_cache():
+    """Clear all Streamlit cache including uploaded files"""
+    st.cache_data.clear()
+    st.cache_resource.clear()
+    st.session_state.clear()
+    st.cache_data.clear()
+    return "🧹 Cache cleared!"
+
 def main():
+    # Add this at the top of main(), after the title
     st.title("🎥 Video RAG: Semantic Search + AI Summary")
     st.write("Use natural language to search within videos using **CLIP + FAISS**")
+
+    # Add cache clearing button in sidebar
+    with st.sidebar:
+        if st.button("🧹 Clear Cache"):
+            message = clear_cache()
+            st.success(message)
+            time.sleep(1)  # Give time for success message
+            st.rerun()  # Rerun the app to reflect cleared state
 
     uploaded_file = st.file_uploader("📁 Upload a video file", type=["mp4", "mov", "avi"])
     query = st.text_input("📝 Enter your search query", "a person walking")
@@ -215,7 +232,6 @@ def main():
             video_path = tmp.name
 
         try:
-            with st.spinner("⏳ Processing video..."):
                 start_time = time.time()
                 frames, frame_ids, timestamps = extract_frames(video_path, sample_fps)
                 
@@ -250,4 +266,4 @@ def main():
                 os.unlink(video_path)
 
 if __name__ == "__main__":
-    main() 
+    main()
