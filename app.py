@@ -155,7 +155,7 @@ def get_gemini_summary(query, retrieved_frames, result_timestamps):
 # 8. Streamlit UI
 # --------------------------------
 def get_clip_segments(video_path, timestamps, window_size=2):
-    """Extract video segments using OpenCV"""
+    """Extract video segments using pure OpenCV"""
     try:
         cap = cv2.VideoCapture(video_path)
         if not cap.isOpened():
@@ -168,36 +168,46 @@ def get_clip_segments(video_path, timestamps, window_size=2):
             start_frame = int(max(0, (ts - window_size/2) * fps))
             end_frame = int(min(cap.get(cv2.CAP_PROP_FRAME_COUNT), (ts + window_size/2) * fps))
             
-            # Create video writer
-            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-            temp_path = f"temp_clip_{ts:.2f}.mp4"
+            # Create temporary file path
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.mp4') as tmp:
+                temp_path = tmp.name
             
-            out = cv2.VideoWriter(temp_path, fourcc, fps, 
-                                (int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
-                                 int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))))
+            # Configure video writer
+            fourcc = cv2.VideoWriter_fourcc(*'avc1')  # Using H.264 codec
+            out = cv2.VideoWriter(
+                temp_path, 
+                fourcc, 
+                fps, 
+                (int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
+                 int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)))
+            )
             
             cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
+            frames_written = 0
+            
             for _ in range(start_frame, end_frame):
                 ret, frame = cap.read()
                 if not ret:
                     break
                 out.write(frame)
+                frames_written += 1
             
             out.release()
             
-            # Read the clip as bytes
-            with open(temp_path, 'rb') as f:
-                clip_bytes = f.read()
-            
-            clips.append({
-                'bytes': clip_bytes,
-                'start': ts - window_size/2,
-                'end': ts + window_size/2
-            })
+            if frames_written > 0:
+                # Read the clip as bytes
+                with open(temp_path, 'rb') as f:
+                    clip_bytes = f.read()
+                
+                clips.append({
+                    'bytes': clip_bytes,
+                    'start': ts - window_size/2,
+                    'end': ts + window_size/2
+                })
             
             # Cleanup
             if os.path.exists(temp_path):
-                os.remove(temp_path)
+                os.unlink(temp_path)
                 
         cap.release()
         return clips
