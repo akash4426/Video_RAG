@@ -10,7 +10,7 @@ import os
 import time
 import google.generativeai as genai
 import io
-from moviepy.editor import VideoFileClip, concatenate_videoclips
+import base64
 
 # --------------------------------
 # 1. Device Setup
@@ -155,47 +155,53 @@ def get_gemini_summary(query, retrieved_frames, result_timestamps):
 # 8. Streamlit UI
 # --------------------------------
 def get_clip_segments(video_path, timestamps, window_size=2):
-    """Extract video clips around the matched timestamps"""
+    """Extract video segments using OpenCV"""
     try:
-        video = VideoFileClip(video_path)
+        cap = cv2.VideoCapture(video_path)
+        if not cap.isOpened():
+            raise RuntimeError(f"Cannot open video {video_path}")
+            
+        fps = cap.get(cv2.CAP_PROP_FPS)
         clips = []
         
-        for timestamp in timestamps:
-            # Calculate clip boundaries
-            start_time = max(0, timestamp - window_size/2)
-            end_time = min(video.duration, timestamp + window_size/2)
+        for ts in timestamps:
+            start_frame = int(max(0, (ts - window_size/2) * fps))
+            end_frame = int(min(cap.get(cv2.CAP_PROP_FRAME_COUNT), (ts + window_size/2) * fps))
             
-            # Extract subclip
-            clip = video.subclip(start_time, end_time)
-            # Set filename for the clip
-            clip_path = f"temp_clip_{timestamp:.2f}.mp4"
+            # Create video writer
+            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+            temp_path = f"temp_clip_{ts:.2f}.mp4"
             
-            # Write clip to file
-            clip.write_videofile(
-                clip_path,
-                codec='libx264',
-                audio_codec='aac',
-                temp_audiofile='temp-audio.m4a',
-                remove_temp=True,
-                logger=None  # Suppress moviepy output
-            )
+            out = cv2.VideoWriter(temp_path, fourcc, fps, 
+                                (int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
+                                 int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))))
+            
+            cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
+            for _ in range(start_frame, end_frame):
+                ret, frame = cap.read()
+                if not ret:
+                    break
+                out.write(frame)
+            
+            out.release()
             
             # Read the clip as bytes
-            with open(clip_path, 'rb') as f:
+            with open(temp_path, 'rb') as f:
                 clip_bytes = f.read()
             
             clips.append({
                 'bytes': clip_bytes,
-                'path': clip_path,
-                'start': start_time,
-                'end': end_time
+                'start': ts - window_size/2,
+                'end': ts + window_size/2
             })
             
-            # Clean up the clip file
-            os.remove(clip_path)
-            
-        video.close()
+            # Cleanup
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+                
+        cap.release()
         return clips
+        
     except Exception as e:
         st.error(f"Error extracting clips: {str(e)}")
         return []
