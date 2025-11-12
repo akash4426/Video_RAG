@@ -38,7 +38,7 @@ fastReruns = true
 
 [theme]
 # Primary accent color for interactive elements
-primaryColor = "#67340fff"
+primaryColor = "#c4885dff"
 
 # Background color for the main content area
 backgroundColor = "#f7f5f3ff"
