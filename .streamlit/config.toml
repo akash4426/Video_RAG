@@ -38,13 +38,13 @@ fastReruns = true
 
 [theme]
 # Primary accent color for interactive elements
-primaryColor = "#ed8fd7ff"
+primaryColor = "#67340fff"
 
 # Background color for the main content area
-backgroundColor = "#e66de0ff"
+backgroundColor = "#d9ac8cff"
 
 # Background color used for the sidebar and most interactive widgets
-secondaryBackgroundColor = "#397cd3ff"
+secondaryBackgroundColor = "#ae722eff"
 
 # Color used for almost all text
 textColor = "#31333F"
