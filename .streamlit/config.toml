@@ -41,10 +41,10 @@ fastReruns = true
 primaryColor = "#67340fff"
 
 # Background color for the main content area
-backgroundColor = "#d9ac8cff"
+backgroundColor = "#f7f5f3ff"
 
 # Background color used for the sidebar and most interactive widgets
-secondaryBackgroundColor = "#ae722eff"
+secondaryBackgroundColor = "#6d3a00ff"
 
 # Color used for almost all text
 textColor = "#31333F"
