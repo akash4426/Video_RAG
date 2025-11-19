@@ -486,7 +486,7 @@ def main():
                     st.video(clip_bytes)
 
             # Gemini summary
-            with st.expander("🧠 AI Summary (Gemini)"):
+            with st.expander("🧠 AI Summary"):
                 if st.button("Generate summary with Gemini"):
                     with st.spinner("🤖 Summarizing…"):
                         summary = gemini_summary(query, pil_results, matched_ts)
