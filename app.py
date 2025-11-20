@@ -217,32 +217,33 @@ def load_clip(model_name: str) -> Tuple[CLIPModel, CLIPProcessor]:
 
 def read_video_meta(video_path: str) -> Tuple[float, int, int]:
     """
-    Extract video metadata without loading the entire video.
-    
-    Args:
-        video_path: Path to video file
-    
-    Returns:
-        Tuple of (fps, width, height)
-    
-    Raises:
-        RuntimeError: If video cannot be opened
-    
-    Example:
-        >>> fps, w, h = read_video_meta("video.mp4")
-        >>> print(f"Video: {w}x{h} @ {fps} FPS")
+    Extract video metadata using MoviePy (better codec support).
     """
-    cap = cv2.VideoCapture(video_path)
-    if not cap.isOpened():
-        raise RuntimeError(f"Cannot open video {video_path}")
-    
-    # Extract metadata using OpenCV properties
-    fps = cap.get(cv2.CAP_PROP_FPS) or 30.0  # Default to 30 if unknown
-    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 0)
-    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
-    
-    cap.release()
-    return fps, width, height
+    try:
+        from moviepy.editor import VideoFileClip
+        
+        video = VideoFileClip(video_path)
+        fps = video.fps or 30.0
+        width, height = video.size
+        video.close()
+        
+        logger.info(f"Video metadata (MoviePy): {width}x{height} @ {fps} FPS")
+        return fps, width, height
+        
+    except Exception as e:
+        logger.warning(f"MoviePy failed to read metadata: {str(e)}")
+        # Fallback to OpenCV
+        cap = cv2.VideoCapture(video_path)
+        if not cap.isOpened():
+            raise RuntimeError(f"Cannot open video {video_path}")
+        
+        fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 0)
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
+        
+        cap.release()
+        logger.info(f"Video metadata (OpenCV): {width}x{height} @ {fps} FPS")
+        return fps, width, height
 
 
 def compute_frame_schedule(
@@ -250,50 +251,67 @@ def compute_frame_schedule(
     sample_fps: float
 ) -> Tuple[List[int], List[float]]:
     """
-    Compute which frames to extract based on sampling rate.
-    
-    Strategy:
-        - Extract frames at regular intervals (sample_fps)
-        - Avoid processing every frame (wasteful)
-        - Maintain temporal coverage
-    
-    Args:
-        video_path: Path to video file
-        sample_fps: Target sampling rate (frames per second)
-    
-    Returns:
-        Tuple of (frame_ids, timestamps)
-        - frame_ids: List of frame indices to extract
-        - timestamps: Corresponding time in seconds
-    
-    Example:
-        >>> frame_ids, timestamps = compute_frame_schedule("video.mp4", 1.0)
-        >>> # For 30 FPS video, extracts frames [0, 30, 60, 90, ...]
-        >>> # At timestamps [0.0, 1.0, 2.0, 3.0, ...]
-    
-    Math:
-        frame_interval = video_fps / sample_fps
+    Compute which frames to extract based on sampling rate using MoviePy.
+    """
+    try:
+        from moviepy.editor import VideoFileClip
         
-        For 30 FPS video with sample_fps=1:
-        frame_interval = 30 / 1 = 30 (extract every 30th frame)
+        video = VideoFileClip(video_path)
+        video_fps = video.fps
+        duration = video.duration
+        video.close()
+        
+        if not video_fps or video_fps <= 0:
+            video_fps = 30.0
+        
+        # Calculate frame sampling interval
+        frame_interval = max(1, int(round(video_fps / sample_fps)))
+        
+        # Calculate total frames
+        total_frames = int(duration * video_fps)
+        
+        frame_ids, timestamps = [], []
+        
+        # Generate frame schedule
+        for fid in range(0, total_frames, frame_interval):
+            timestamp = fid / video_fps
+            if timestamp <= duration:  # Ensure within video duration
+                frame_ids.append(fid)
+                timestamps.append(timestamp)
+        
+        if not frame_ids:
+            raise ValueError("No frames scheduled for extraction")
+        
+        logger.info(f"Scheduled {len(frame_ids)} frames (every {frame_interval} frames)")
+        
+        return frame_ids, timestamps
+        
+    except Exception as e:
+        logger.error(f"MoviePy frame scheduling failed: {str(e)}")
+        # Fallback to OpenCV
+        return compute_frame_schedule_opencv(video_path, sample_fps)
+
+
+def compute_frame_schedule_opencv(
+    video_path: str, 
+    sample_fps: float
+) -> Tuple[List[int], List[float]]:
+    """
+    Fallback: OpenCV-based frame scheduling.
     """
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
         raise RuntimeError(f"Cannot open video {video_path}")
 
-    # Get video properties
     video_fps = cap.get(cv2.CAP_PROP_FPS)
     if not video_fps or video_fps <= 0:
-        video_fps = 30.0  # Fallback for corrupted metadata
+        video_fps = 30.0
     
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
-
-    # Calculate frame sampling interval
     frame_interval = max(1, int(round(video_fps / sample_fps)))
     
     frame_ids, timestamps = [], []
 
-    # Generate frame schedule
     for fid in range(0, total_frames, frame_interval):
         timestamp = fid / video_fps
         frame_ids.append(fid)
@@ -312,7 +330,85 @@ def read_frames_by_ids(
     frame_ids: List[int]
 ) -> List[np.ndarray]:
     """
-    Random-access read of specific video frames with detailed error tracking.
+    Random-access read of specific video frames using MoviePy (more compatible than OpenCV).
+    """
+    frames = []
+    
+    try:
+        # Use MoviePy instead of OpenCV for better codec support
+        from moviepy.editor import VideoFileClip
+        
+        video = VideoFileClip(video_path)
+        logger.info(f"✓ Opened video with MoviePy")
+        logger.info(f"Video properties:")
+        logger.info(f"  - Duration: {video.duration}s")
+        logger.info(f"  - FPS: {video.fps}")
+        logger.info(f"  - Size: {video.size}")
+        
+        total_frames = int(video.duration * video.fps)
+        video_fps = video.fps
+        
+        if total_frames == 0 or video_fps == 0:
+            logger.error("Video has 0 frames or 0 FPS")
+            video.close()
+            raise RuntimeError(f"Invalid video properties: {total_frames} frames @ {video_fps} FPS")
+        
+        successful = 0
+        failed = 0
+        
+        for idx, fid in enumerate(frame_ids):
+            # Validate frame ID
+            if fid < 0 or fid >= total_frames:
+                logger.warning(f"Frame ID {fid} out of range [0, {total_frames})")
+                frames.append(None)
+                failed += 1
+                continue
+            
+            try:
+                # Convert frame ID to timestamp
+                timestamp = fid / video_fps
+                
+                # Get frame at timestamp
+                frame = video.get_frame(timestamp)
+                
+                if frame is None or frame.size == 0:
+                    if idx < 3:
+                        logger.warning(f"Failed to read frame {fid} at {timestamp}s")
+                    frames.append(None)
+                    failed += 1
+                    continue
+                
+                # MoviePy returns RGB frames (not BGR like OpenCV)
+                frames.append(frame)
+                successful += 1
+                
+            except Exception as e:
+                if idx < 3:
+                    logger.error(f"Exception reading frame {fid}: {str(e)}")
+                frames.append(None)
+                failed += 1
+        
+        video.close()
+        
+        if successful == 0:
+            logger.error(f"Frame extraction completely failed: 0/{len(frame_ids)} frames read")
+        else:
+            logger.info(f"Frame extraction: {successful} successful, {failed} failed out of {len(frame_ids)}")
+        
+        return frames
+        
+    except Exception as e:
+        logger.error(f"Failed to open video with MoviePy: {str(e)}")
+        # Fallback to OpenCV method
+        return read_frames_by_ids_opencv(video_path, frame_ids)
+
+
+def read_frames_by_ids_opencv(
+    video_path: str, 
+    frame_ids: List[int]
+) -> List[np.ndarray]:
+    """
+    Fallback: OpenCV-based frame extraction.
     """
     frames = []
     
@@ -329,15 +425,15 @@ def read_frames_by_ids(
         cap = cv2.VideoCapture(video_path, backend)
         if cap.isOpened():
             successful_backend = name
-            logger.info(f"✓ Opened video with backend: {name}")
+            logger.info(f"✓ Opened video with OpenCV backend: {name}")
             break
         else:
-            logger.warning(f"Failed to open video with backend: {name}")
+            logger.warning(f"Failed to open video with OpenCV backend: {name}")
             if cap:
                 cap.release()
     
     if not cap or not cap.isOpened():
-        logger.error(f"Cannot open video with any backend: {video_path}")
+        logger.error(f"Cannot open video with any OpenCV backend: {video_path}")
         raise RuntimeError(f"Cannot open video {video_path}")
 
     # Get video properties
@@ -350,7 +446,7 @@ def read_frames_by_ids(
     # Decode fourcc
     fourcc_str = "".join([chr((fourcc >> 8 * i) & 0xFF) for i in range(4)])
     
-    logger.info(f"Video properties:")
+    logger.info(f"Video properties (OpenCV):")
     logger.info(f"  - Backend: {successful_backend}")
     logger.info(f"  - Resolution: {width}x{height}")
     logger.info(f"  - FPS: {video_fps}")
@@ -366,7 +462,6 @@ def read_frames_by_ids(
     failed = 0
 
     for idx, fid in enumerate(frame_ids):
-        # Validate frame ID
         if fid < 0 or fid >= total_frames:
             logger.warning(f"Frame ID {fid} out of range [0, {total_frames})")
             frames.append(None)
@@ -374,31 +469,29 @@ def read_frames_by_ids(
             continue
             
         try:
-            # Seek to specific frame (random access)
             cap.set(cv2.CAP_PROP_POS_FRAMES, int(fid))
             ret, frame = cap.read()
             
             if not ret or frame is None:
-                if idx < 3:  # Log first few failures in detail
-                    logger.warning(f"Failed to read frame {fid} (attempt {idx+1})")
+                if idx < 3:
+                    logger.warning(f"Failed to read frame {fid}")
                 frames.append(None)
                 failed += 1
                 continue
             
-            # Validate frame shape
             if len(frame.shape) != 3 or frame.shape[2] != 3:
                 logger.warning(f"Invalid frame shape at {fid}: {frame.shape}")
                 frames.append(None)
                 failed += 1
                 continue
             
-            # Convert BGR (OpenCV default) to RGB (standard format)
+            # Convert BGR to RGB
             rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             frames.append(rgb)
             successful += 1
             
         except Exception as e:
-            if idx < 3:  # Log first few exceptions in detail
+            if idx < 3:
                 logger.error(f"Exception reading frame {fid}: {str(e)}")
             frames.append(None)
             failed += 1
@@ -406,10 +499,10 @@ def read_frames_by_ids(
     cap.release()
     
     if successful == 0:
-        logger.error(f"Frame extraction completely failed: 0/{len(frame_ids)} frames read successfully")
-        logger.error(f"Video codec '{fourcc_str}' may not be supported by OpenCV on this system")
+        logger.error(f"OpenCV frame extraction failed: 0/{len(frame_ids)} frames")
+        logger.error(f"Video codec '{fourcc_str}' may not be supported")
     else:
-        logger.info(f"Frame extraction: {successful} successful, {failed} failed out of {len(frame_ids)}")
+        logger.info(f"OpenCV extraction: {successful} successful, {failed} failed")
     
     return frames
 
