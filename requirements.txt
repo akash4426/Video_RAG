@@ -1,34 +1,33 @@
-# === Core Framework ===
+# Core Framework
 streamlit>=1.28.0
 
-# === PyTorch (CPU build, Streamlit Cloud compatible) ===
+# PyTorch (CPU-only for cloud deployment)
 torch>=2.0.0
 torchvision>=0.17.0
 
-# === Computer Vision / Image Processing ===
+# Computer Vision & Image Processing
 opencv-python-headless>=4.8.0.74
 Pillow>=10.0.0
 numpy>=1.24.0
 
-# === Similarity Search (FAISS CPU version) ===
+# Similarity Search (FAISS CPU version)
 faiss-cpu>=1.7.4
 
-# === Transformers for CLIP ===
+# Transformers for CLIP
 transformers>=4.21.0
-sentencepiece
 safetensors>=0.4.0
 
-# === Video Handling (for MoviePy clips) ===
+# Video Processing
 moviepy>=1.0.3
 imageio>=2.34.0
 imageio-ffmpeg>=0.4.9
+decorator>=4.4.2
 proglog>=0.1.10
 
-# === Google Gemini API ===
+# Google Gemini API
 google-generativeai>=0.3.0
 
-# === Utilities ===
-tqdm>=4.66.0
+# Utilities
 protobuf>=4.25.3
 requests>=2.31.0
-decorator>=4.4.2
+tqdm>=4.66.0

@@ -7,9 +7,6 @@ A Retrieval-Augmented Generation (RAG) system for semantic video search using:
 - FAISS (Facebook AI) for efficient similarity search
 - Gemini (Google) for AI-powered summaries
 - MoviePy for video clip extraction
-
-Author: Akash Karri
-License: MIT
 """
 
 # ============================================================================
