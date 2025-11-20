@@ -312,50 +312,70 @@ def read_frames_by_ids(
     frame_ids: List[int]
 ) -> List[np.ndarray]:
     """
-    Random-access read of specific video frames.
-    
-    Why random access?
-        - Only need specific frames after search
-        - Much faster than sequential reading
-        - Reduces memory usage
-    
-    Args:
-        video_path: Path to video file
-        frame_ids: List of frame indices to read
-    
-    Returns:
-        List of RGB frames as numpy arrays (or None for failed reads)
-    
-    Technical details:
-        - Uses cv2.CAP_PROP_POS_FRAMES to seek
-        - Converts BGR (OpenCV) to RGB (standard)
-        - Handles missing/corrupt frames gracefully
-    
-    Example:
-        >>> frames = read_frames_by_ids("video.mp4", [0, 30, 60])
-        >>> print(frames[0].shape)  # (height, width, 3)
+    Random-access read of specific video frames with detailed error tracking.
     """
     frames = []
     cap = cv2.VideoCapture(video_path)
     
     if not cap.isOpened():
+        logger.error(f"Cannot open video: {video_path}")
         raise RuntimeError(f"Cannot open video {video_path}")
 
-    for fid in frame_ids:
-        # Seek to specific frame (random access)
-        cap.set(cv2.CAP_PROP_POS_FRAMES, int(fid))
-        ret, frame = cap.read()
-        
-        if not ret:
-            # Frame read failed (corrupted, out of bounds, etc.)
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    video_fps = cap.get(cv2.CAP_PROP_FPS)
+    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    
+    logger.info(f"Video info: {width}x{height}, {video_fps} FPS, {total_frames} total frames")
+    
+    successful = 0
+    failed = 0
+
+    for idx, fid in enumerate(frame_ids):
+        # Validate frame ID
+        if fid < 0 or fid >= total_frames:
+            logger.warning(f"Frame ID {fid} out of range [0, {total_frames})")
             frames.append(None)
+            failed += 1
             continue
-        
-        # Convert BGR (OpenCV default) to RGB (standard format)
-        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        frames.append(rgb)
+            
+        try:
+            # Seek to specific frame (random access)
+            cap.set(cv2.CAP_PROP_POS_FRAMES, int(fid))
+            ret, frame = cap.read()
+            
+            if not ret or frame is None:
+                if idx < 3:  # Log first few failures in detail
+                    logger.warning(f"Failed to read frame {fid} (attempt {idx+1})")
+                frames.append(None)
+                failed += 1
+                continue
+            
+            # Validate frame shape
+            if len(frame.shape) != 3 or frame.shape[2] != 3:
+                logger.warning(f"Invalid frame shape at {fid}: {frame.shape}")
+                frames.append(None)
+                failed += 1
+                continue
+            
+            # Convert BGR (OpenCV default) to RGB (standard format)
+            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            frames.append(rgb)
+            successful += 1
+            
+        except Exception as e:
+            if idx < 3:  # Log first few exceptions in detail
+                logger.error(f"Exception reading frame {fid}: {str(e)}")
+            frames.append(None)
+            failed += 1
 
     cap.release()
+    
+    if successful == 0:
+        logger.error(f"Frame extraction completely failed: 0/{len(frame_ids)} frames read successfully")
+    else:
+        logger.info(f"Frame extraction: {successful} successful, {failed} failed out of {len(frame_ids)}")
+    
     return frames
 
 
@@ -427,41 +447,7 @@ def build_or_load_embeddings(
     batch_size: int = 16,
 ) -> Tuple[np.ndarray, List[int], List[float], faiss.Index, str]:
     """
-    Core function: Build embeddings or load from cache.
-    
-    This is the heart of the RAG system. It:
-    1. Checks if embeddings exist in cache
-    2. If yes: Load instantly
-    3. If no: Compute, save, then return
-    
-    Caching strategy:
-        - Cache key = SHA256(video) + model + fps
-        - Invalidates automatically if video/settings change
-        - Persists across app restarts
-    
-    Args:
-        video_path: Path to video file
-        model_name: CLIP model identifier
-        sample_fps: Frame sampling rate
-        batch_size: Number of frames to process simultaneously
-    
-    Returns:
-        Tuple of:
-        - embeddings: Float32 array [N, 512]
-        - frame_ids: List of frame indices
-        - timestamps: List of timestamps (seconds)
-        - index: FAISS similarity search index
-        - cache_key: Unique identifier for this cache
-    
-    Performance:
-        - First run: ~2-5 seconds per minute of video
-        - Cached runs: < 100ms
-    
-    Example:
-        >>> emb, ids, ts, idx, key = build_or_load_embeddings(
-        ...     "video.mp4", "openai/clip-vit-base-patch32", 1.0
-        ... )
-        >>> print(emb.shape)  # (3600, 512) for 1-hour video @ 1 FPS
+    Core function: Build embeddings or load from cache with detailed error tracking.
     """
     # Generate unique cache key
     vid_hash = sha256_file(video_path)
@@ -490,14 +476,32 @@ def build_or_load_embeddings(
     st.info("⚙️ First-time processing: computing embeddings (cached for future runs).")
     
     # Step 1: Determine which frames to extract
-    frame_ids, timestamps = compute_frame_schedule(video_path, sample_fps)
+    try:
+        frame_ids, timestamps = compute_frame_schedule(video_path, sample_fps)
+        logger.info(f"✓ Scheduled {len(frame_ids)} frames for extraction")
+        st.info(f"📊 Processing {len(frame_ids)} frames from video...")
+    except Exception as e:
+        error_msg = f"Failed to compute frame schedule: {str(e)}"
+        logger.error(error_msg)
+        st.error(error_msg)
+        raise RuntimeError(error_msg)
 
     # Step 2: Load CLIP model
-    clip_model, processor = load_clip(model_name)
+    try:
+        clip_model, processor = load_clip(model_name)
+        logger.info(f"✓ Loaded CLIP model: {model_name}")
+    except Exception as e:
+        error_msg = f"Failed to load CLIP model: {str(e)}"
+        logger.error(error_msg)
+        st.error(error_msg)
+        raise RuntimeError(error_msg)
 
     # Step 3: Process frames in batches
     all_chunks = []
     D = None  # Embedding dimension (will be set on first batch)
+    failed_batches = 0
+    successful_frames = 0
+    total_frames_attempted = 0
 
     # Progress tracking
     pbar = st.progress(0.0, text="🔄 Computing embeddings…")
@@ -506,87 +510,168 @@ def build_or_load_embeddings(
     for start in range(0, total, batch_size):
         end = min(start + batch_size, total)
         batch_ids = frame_ids[start:end]
+        total_frames_attempted += len(batch_ids)
         
-        # Read frames for this batch
-        batch_frames = read_frames_by_ids(video_path, batch_ids)
-        
-        # Filter out failed reads (None values)
-        valid_pairs = [
-            (fid, fr) for fid, fr in zip(batch_ids, batch_frames) 
-            if fr is not None
-        ]
-        
-        if not valid_pairs:
-            pbar.progress(end / total)
-            continue
+        try:
+            # Read frames for this batch
+            batch_frames = read_frames_by_ids(video_path, batch_ids)
+            
+            # Filter out failed reads (None values)
+            valid_pairs = [
+                (fid, fr) for fid, fr in zip(batch_ids, batch_frames) 
+                if fr is not None
+            ]
+            
+            if not valid_pairs:
+                failed_batches += 1
+                logger.warning(f"Batch {start}-{end}: No valid frames (all {len(batch_ids)} frames failed)")
+                pbar.progress(end / total, text=f"🔄 Processing… {end}/{total} frames (⚠️ {failed_batches} empty batches)")
+                continue
 
-        _, frames_batch = zip(*valid_pairs)
+            _, frames_batch = zip(*valid_pairs)
+            successful_frames += len(frames_batch)
+            
+            logger.info(f"Batch {start}-{end}: {len(frames_batch)}/{len(batch_ids)} frames valid")
 
-        # Preprocess images for CLIP
-        inputs = processor(
-            images=list(frames_batch), 
-            return_tensors="pt", 
-            padding=True
-        ).to(device)
-        
-        # Generate embeddings (no gradient computation needed)
-        with torch.no_grad():
-            # Extract image features using CLIP vision encoder
-            feats = clip_model.get_image_features(**inputs)
+            # Preprocess images for CLIP
+            try:
+                inputs = processor(
+                    images=list(frames_batch), 
+                    return_tensors="pt", 
+                    padding=True
+                ).to(device)
+            except Exception as proc_e:
+                logger.error(f"Processor failed on batch {start}-{end}: {str(proc_e)}")
+                failed_batches += 1
+                pbar.progress(end / total)
+                continue
             
-            # L2 normalization (convert to unit vectors)
-            # Why? Enables cosine similarity via dot product
-            feats = feats / feats.norm(p=2, dim=-1, keepdim=True)
-            
-            # Convert to numpy and ensure float32 (FAISS requirement)
-            feats = feats.detach().cpu().numpy().astype("float32")
-            
-            all_chunks.append(feats)
-            
-            if D is None:
-                D = feats.shape[1]  # Typically 512 for CLIP
+            # Generate embeddings (no gradient computation needed)
+            try:
+                with torch.no_grad():
+                    # Extract image features using CLIP vision encoder
+                    feats = clip_model.get_image_features(**inputs)
+                    
+                    # L2 normalization (convert to unit vectors)
+                    feats = feats / feats.norm(p=2, dim=-1, keepdim=True)
+                    
+                    # Convert to numpy and ensure float32 (FAISS requirement)
+                    feats = feats.detach().cpu().numpy().astype("float32")
+                    
+                    all_chunks.append(feats)
+                    
+                    if D is None:
+                        D = feats.shape[1]  # Typically 512 for CLIP
+                        logger.info(f"✓ Embedding dimension: {D}")
+                        
+            except Exception as model_e:
+                logger.error(f"Model inference failed on batch {start}-{end}: {str(model_e)}")
+                failed_batches += 1
+                pbar.progress(end / total)
+                continue
 
+        except Exception as e:
+            failed_batches += 1
+            logger.error(f"Unexpected error processing batch {start}-{end}: {str(e)}")
+            import traceback
+            logger.error(traceback.format_exc())
+            
         # Update progress bar
+        success_rate = (successful_frames / total_frames_attempted * 100) if total_frames_attempted > 0 else 0
         pbar.progress(
             end / total, 
-            text=f"🔄 Computing embeddings… {int((end/total)*100)}%"
+            text=f"🔄 Computing embeddings… {int((end/total)*100)}% | ✓ {successful_frames} frames ({success_rate:.1f}%)"
         )
 
     pbar.empty()
 
+    # Log final statistics
+    logger.info(f"=== Processing Complete ===")
+    logger.info(f"Total frames scheduled: {len(frame_ids)}")
+    logger.info(f"Total frames attempted: {total_frames_attempted}")
+    logger.info(f"Successful frames: {successful_frames}")
+    logger.info(f"Failed batches: {failed_batches}")
+    logger.info(f"Success rate: {(successful_frames/total_frames_attempted*100):.1f}%")
+    logger.info(f"Embedding chunks: {len(all_chunks)}")
+
     if not all_chunks:
-        raise RuntimeError("Failed to compute any embeddings for the video.")
+        error_details = (
+            f"❌ Failed to compute any embeddings for the video.\n\n"
+            f"**Diagnostics:**\n"
+            f"- Scheduled frames: {len(frame_ids)}\n"
+            f"- Frames attempted: {total_frames_attempted}\n"
+            f"- Successful frames: {successful_frames}\n"
+            f"- Failed batches: {failed_batches}\n"
+            f"- Video path: {video_path}\n"
+            f"- Device: {device}\n"
+            f"- Model: {model_name}\n\n"
+            f"**Possible causes:**\n"
+            f"1. Video file is corrupted or unreadable\n"
+            f"2. Video codec not supported by OpenCV\n"
+            f"3. Memory issues on device: {device}\n"
+            f"4. Frame extraction failed for all frames\n\n"
+            f"**Suggestions:**\n"
+            f"- Try a different video file\n"
+            f"- Try reducing batch size to 4\n"
+            f"- Check video file can be played normally\n"
+            f"- Check system logs above for specific errors"
+        )
+        logger.error(error_details)
+        st.error(error_details)
+        raise RuntimeError("No embeddings could be computed from the video.")
 
     # Step 4: Concatenate all batches
-    embeddings = np.vstack(all_chunks).astype("float32")
+    try:
+        embeddings = np.vstack(all_chunks).astype("float32")
+        logger.info(f"✓ Created embedding matrix: {embeddings.shape}")
+    except Exception as e:
+        error_msg = f"Failed to concatenate embeddings: {str(e)}"
+        logger.error(error_msg)
+        st.error(error_msg)
+        raise RuntimeError(error_msg)
 
     # Step 5: Build FAISS index
-    # IndexFlatIP = Inner Product (dot product)
-    # After L2 normalization, IP = cosine similarity
-    faiss.normalize_L2(embeddings)
-    index = faiss.IndexFlatIP(embeddings.shape[1])
-    index.add(embeddings)
+    try:
+        faiss.normalize_L2(embeddings)
+        index = faiss.IndexFlatIP(embeddings.shape[1])
+        index.add(embeddings)
+        logger.info(f"✓ Built FAISS index with {index.ntotal} vectors")
+    except Exception as e:
+        error_msg = f"Failed to build FAISS index: {str(e)}"
+        logger.error(error_msg)
+        st.error(error_msg)
+        raise RuntimeError(error_msg)
 
     # Step 6: Persist to disk
-    np.save(paths["emb"], embeddings)
-    np.save(paths["ts"], np.array(timestamps, dtype=np.float32))
-    np.save(paths["ids"], np.array(frame_ids, dtype=np.int64))
-    save_index(index, paths["index"])
-    
-    # Save metadata for debugging/inspection
-    with open(paths["meta"], "w") as f:
-        json.dump(
-            {
-                "video_path": os.path.basename(video_path),
-                "model_name": model_name,
-                "sample_fps": sample_fps,
-                "num_vectors": len(embeddings),
-                "created_at": time.time(),
-            },
-            f,
-        )
+    try:
+        np.save(paths["emb"], embeddings)
+        np.save(paths["ts"], np.array(timestamps[:len(embeddings)], dtype=np.float32))
+        np.save(paths["ids"], np.array(frame_ids[:len(embeddings)], dtype=np.int64))
+        save_index(index, paths["index"])
+        
+        # Save metadata for debugging/inspection
+        with open(paths["meta"], "w") as f:
+            json.dump(
+                {
+                    "video_path": os.path.basename(video_path),
+                    "model_name": model_name,
+                    "sample_fps": sample_fps,
+                    "num_vectors": len(embeddings),
+                    "successful_frames": successful_frames,
+                    "failed_batches": failed_batches,
+                    "success_rate": f"{(successful_frames/total_frames_attempted*100):.2f}%",
+                    "created_at": time.time(),
+                },
+                f,
+            )
+        logger.info(f"✓ Cached embeddings to {paths['base']}")
+    except Exception as e:
+        logger.warning(f"Failed to save cache (non-critical): {str(e)}")
+        # Don't raise - we can still return the computed embeddings
 
-    return embeddings, frame_ids, timestamps, index, cache_key
+    st.success(f"✅ Successfully processed {successful_frames}/{total_frames_attempted} frames ({(successful_frames/total_frames_attempted*100):.1f}%)")
+    
+    return embeddings, frame_ids[:len(embeddings)], timestamps[:len(embeddings)], index, cache_key
 
 
 # ============================================================================
