@@ -83,30 +83,42 @@ GEMINI_MODEL = "gemini-2.5-flash"
 # DEVICE DETECTION
 # ============================================================================
 
-def get_device() -> torch.device:
+def get_available_devices():
+    """Get list of available compute devices."""
+    devices = ["cpu"]
+    if torch.cuda.is_available():
+        devices.append("cuda")
+    if torch.backends.mps.is_available():
+        devices.append("mps")
+    return devices
+
+
+def get_device(selected: str = "auto") -> torch.device:
     """
-    Automatically detect and return the best available compute device.
+    Get torch device based on selection.
     
-    Priority order:
-    1. MPS (Metal Performance Shaders) - Apple Silicon (M1/M2/M3)
-    2. CUDA - NVIDIA GPUs
-    3. CPU - Fallback for any system
+    Args:
+        selected: Device preference ("auto", "cuda", "mps", "cpu")
     
     Returns:
-        torch.device: The optimal device for tensor operations
-    
-    Example:
-        >>> device = get_device()
-        >>> print(device)  # cuda:0, mps, or cpu
+        torch.device: Selected device
     """
-    if torch.backends.mps.is_available():
-        return torch.device("mps")
-    if torch.cuda.is_available():
+    if selected == "auto":
+        if torch.backends.mps.is_available():
+            return torch.device("mps")
+        if torch.cuda.is_available():
+            return torch.device("cuda")
+        return torch.device("cpu")
+    
+    if selected == "cuda" and torch.cuda.is_available():
         return torch.device("cuda")
+    if selected == "mps" and torch.backends.mps.is_available():
+        return torch.device("mps")
     return torch.device("cpu")
 
 
-device = get_device()
+# Initialize device (will be updated in main())
+device = get_device("auto")
 
 
 # ============================================================================
@@ -173,7 +185,7 @@ def to_hms(seconds: float) -> str:
 # ============================================================================
 
 @st.cache_resource
-def load_clip(model_name: str) -> Tuple[CLIPModel, CLIPProcessor]:
+def load_clip(model_name: str, _device: torch.device) -> Tuple[CLIPModel, CLIPProcessor]:
     """
     Load CLIP model and processor with caching.
     
@@ -184,6 +196,7 @@ def load_clip(model_name: str) -> Tuple[CLIPModel, CLIPProcessor]:
     
     Args:
         model_name: HuggingFace model identifier
+        _device: Torch device (underscore prefix prevents hashing)
     
     Returns:
         Tuple of (CLIPModel, CLIPProcessor)
@@ -193,22 +206,27 @@ def load_clip(model_name: str) -> Tuple[CLIPModel, CLIPProcessor]:
         - Processor: Handles image/text preprocessing
     
     Example:
-        >>> model, processor = load_clip("openai/clip-vit-base-patch32")
+        >>> model, processor = load_clip("openai/clip-vit-base-patch32", device)
         >>> model.eval()  # Set to evaluation mode
     """
-    # Load model with safetensors (faster, safer serialization format)
-    model = CLIPModel.from_pretrained(
-        model_name, 
-        use_safetensors=True
-    ).to(device)
-    
-    # Load processor for input preprocessing
-    processor = CLIPProcessor.from_pretrained(model_name)
-    
-    # Set model to evaluation mode (disables dropout, etc.)
-    model.eval()
-    
-    return model, processor
+    try:
+        # Load model with safetensors (faster, safer serialization format)
+        model = CLIPModel.from_pretrained(
+            model_name, 
+            use_safetensors=True
+        ).to(_device)
+        
+        # Load processor for input preprocessing
+        processor = CLIPProcessor.from_pretrained(model_name)
+        
+        # Set model to evaluation mode (disables dropout, etc.)
+        model.eval()
+        
+        return model, processor
+    except Exception as e:
+        logger.error(f"Failed to load CLIP model: {e}")
+        st.error(f"Failed to load CLIP model: {e}")
+        raise
 
 
 # ============================================================================
@@ -425,6 +443,7 @@ def build_or_load_embeddings(
     model_name: str,
     sample_fps: float,
     batch_size: int = 16,
+    _device: torch.device = None
 ) -> Tuple[np.ndarray, List[int], List[float], faiss.Index, str]:
     """
     Core function: Build embeddings or load from cache.
@@ -444,6 +463,7 @@ def build_or_load_embeddings(
         model_name: CLIP model identifier
         sample_fps: Frame sampling rate
         batch_size: Number of frames to process simultaneously
+        _device: Torch device to use
     
     Returns:
         Tuple of:
@@ -463,6 +483,9 @@ def build_or_load_embeddings(
         ... )
         >>> print(emb.shape)  # (3600, 512) for 1-hour video @ 1 FPS
     """
+    if _device is None:
+        _device = device
+        
     # Generate unique cache key
     vid_hash = sha256_file(video_path)
     cache_key = f"{vid_hash}_{model_name.replace('/', '-')}_fps{sample_fps}"
@@ -493,7 +516,7 @@ def build_or_load_embeddings(
     frame_ids, timestamps = compute_frame_schedule(video_path, sample_fps)
 
     # Step 2: Load CLIP model
-    clip_model, processor = load_clip(model_name)
+    clip_model, processor = load_clip(model_name, _device)
 
     # Step 3: Process frames in batches
     all_chunks = []
@@ -527,7 +550,7 @@ def build_or_load_embeddings(
             images=list(frames_batch), 
             return_tensors="pt", 
             padding=True
-        ).to(device)
+        ).to(_device)
         
         # Generate embeddings (no gradient computation needed)
         with torch.no_grad():
@@ -598,6 +621,7 @@ def text_search(
     index: faiss.Index,
     model_name: str,
     top_k: int = 3,
+    _device: torch.device = None
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
     Semantic search: Find frames matching text query.
@@ -613,6 +637,7 @@ def text_search(
         index: Pre-built FAISS index
         model_name: CLIP model identifier
         top_k: Number of results to return
+        _device: Torch device to use
     
     Returns:
         Tuple of (distances, indices)
@@ -628,15 +653,18 @@ def text_search(
         >>> print(D)  # [0.89, 0.85, 0.82]
         >>> print(I)  # [120, 450, 780]
     """
+    if _device is None:
+        _device = device
+        
     # Load CLIP model
-    clip_model, processor = load_clip(model_name)
+    clip_model, processor = load_clip(model_name, _device)
     
     # Preprocess text query
     text_inputs = processor(
         text=[query], 
         return_tensors="pt", 
         padding=True
-    ).to(device)
+    ).to(_device)
     
     # Generate text embedding
     with torch.no_grad():
@@ -694,7 +722,9 @@ def gemini_summary(
     """
     try:
         # Retrieve API key from Streamlit secrets
-        api_key = st.secrets["GEMINI_API_KEY"]
+        api_key = st.secrets.get("GEMINI_API_KEY")
+        if not api_key:
+            return "⚠️ Missing Gemini API key in .streamlit/secrets.toml (GEMINI_API_KEY)."
     except Exception:
         return "⚠️ Missing Gemini API key in .streamlit/secrets.toml (GEMINI_API_KEY)."
 
@@ -759,7 +789,6 @@ def make_storyboard(
     
     # Create blank canvas (dark gray background)
     sheet = Image.new("RGB", (cols * cell, rows * cell), color=(20, 20, 20))
-    draw = ImageDraw.Draw(sheet)
 
     # Place each image in grid
     for idx, img in enumerate(images):
@@ -770,8 +799,9 @@ def make_storyboard(
         thumb = img.copy()
         thumb.thumbnail((cell, cell))
         
-        # Calculate position
-        x, y = c * cell, r * cell
+        # Calculate position (center in cell)
+        x = c * cell + (cell - thumb.width) // 2
+        y = r * cell + (cell - thumb.height) // 2
         
         # Paste into canvas
         sheet.paste(thumb, (x, y))
@@ -851,7 +881,8 @@ def extract_clips_moviepy(
                 clips.append(f.read())
             
             # Cleanup temp file
-            os.remove(tmp_path)
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
 
         # Create merged highlight reel
         merged_bytes = None
@@ -873,7 +904,8 @@ def extract_clips_moviepy(
             with open(merged_path, "rb") as f:
                 merged_bytes = f.read()
             
-            os.remove(merged_path)
+            if os.path.exists(merged_path):
+                os.remove(merged_path)
 
         # Cleanup
         video.close()
@@ -910,6 +942,8 @@ def main():
     5. Optional: Generate clips, AI summary
     """
     
+    global device
+    
     # ========================================================================
     # PAGE CONFIGURATION
     # ========================================================================
@@ -931,14 +965,25 @@ def main():
     # ========================================================================
     
     with st.sidebar:
-        # Display current device
-        st.info(f"⚙️ Using device: **{str(device).upper()}**")
+        st.header("⚙️ Configuration")
+        
+        # Device selection
+        available_devices = get_available_devices()
+        selected_device = st.selectbox(
+            "Compute Device",
+            available_devices,
+            index=0,
+            help="Select device for model inference"
+        )
+        device = get_device(selected_device)
+        st.info(f"Using device: **{str(device).upper()}**")
         
         # Model selection
         model_name = st.selectbox(
             "CLIP Model",
             MODEL_CHOICES,
-            index=MODEL_CHOICES.index(DEFAULT_MODEL)
+            index=MODEL_CHOICES.index(DEFAULT_MODEL),
+            help="Choose CLIP model variant"
         )
         
         # Sampling rate (frames per second)
@@ -958,7 +1003,7 @@ def main():
             max_value=64,
             value=16,
             step=4,
-            help="Higher batch size = faster but uses more GPU memory"
+            help="Higher batch size = faster but uses more memory"
         )
         
         # Clip duration around matched timestamps
@@ -982,19 +1027,23 @@ def main():
         )
 
         # Advanced options
-        with st.expander("Advanced"):
+        with st.expander("Advanced Options"):
             st.write("Embedding & index will be persisted per video hash "
                      "in a temp cache.")
+            st.write(f"Cache location: `{CACHE_ROOT}`")
             
             # Cache clearing button
             if st.button("🧹 Clear all cached indices"):
                 try:
                     import shutil
-                    shutil.rmtree(CACHE_ROOT)
-                    ensure_dir(CACHE_ROOT)
-                    st.success("Cache cleared.")
+                    if os.path.exists(CACHE_ROOT):
+                        shutil.rmtree(CACHE_ROOT)
+                        ensure_dir(CACHE_ROOT)
+                        st.success("✅ Cache cleared successfully!")
+                        time.sleep(1)
+                        st.rerun()
                 except Exception as e:
-                    st.error(f"Failed to clear cache: {e}")
+                    st.error(f"❌ Failed to clear cache: {e}")
 
     # ========================================================================
     # MAIN AREA: VIDEO UPLOAD & SEARCH
@@ -1003,13 +1052,15 @@ def main():
     # File uploader
     uploaded = st.file_uploader(
         "📁 Upload a video file",
-        type=["mp4", "mov", "avi", "mkv"]
+        type=["mp4", "mov", "avi", "mkv"],
+        help="Supported formats: MP4, MOV, AVI, MKV"
     )
     
     # Search query input
     query = st.text_input(
         "📝 Enter your search query",
-        "a person walking"
+        "a person walking",
+        help="Describe what you're looking for in the video"
     )
 
     # Process if both video and query are provided
@@ -1037,7 +1088,8 @@ def main():
                     video_path,
                     model_name,
                     sample_fps,
-                    batch_size=batch_size
+                    batch_size=batch_size,
+                    _device=device
                 )
             t1 = time.time()
 
@@ -1050,7 +1102,7 @@ def main():
             # STEP 3: SEARCH
             # ================================================================
             
-            D, I = text_search(query, index, model_name, top_k=top_k)
+            D, I = text_search(query, index, model_name, top_k=top_k, _device=device)
             
             # Map indices back to timestamps and frame IDs
             matched_ts = [timestamps[i] for i in I]
@@ -1066,7 +1118,7 @@ def main():
             # STEP 4: DISPLAY RESULTS
             # ================================================================
             
-            st.subheader("🔎 Matches")
+            st.subheader("🔎 Search Results")
             
             for rank, (score, ts, fid, fr) in enumerate(
                 zip(D, matched_ts, matched_ids, result_frames), start=1
@@ -1136,11 +1188,14 @@ def main():
                     window=clip_duration
                 )
                 
-                for idx, (clip_bytes, ts) in enumerate(
-                    zip(clips, matched_ts), start=1
-                ):
-                    st.markdown(f"**Clip #{idx}** • {ts:.2f}s → {to_hms(ts)}")
-                    st.video(clip_bytes)
+                if clips:
+                    for idx, (clip_bytes, ts) in enumerate(
+                        zip(clips, matched_ts), start=1
+                    ):
+                        st.markdown(f"**Clip #{idx}** • {ts:.2f}s → {to_hms(ts)}")
+                        st.video(clip_bytes)
+                else:
+                    st.info("No clips available.")
 
             # ================================================================
             # STEP 7: AI SUMMARY
@@ -1158,14 +1213,14 @@ def main():
             
         finally:
             # Cleanup: Remove temporary video file
-            if os.path.exists(video_path):
+            if 'video_path' in locals() and os.path.exists(video_path):
                 try:
                     os.unlink(video_path)
                 except Exception:
                     pass
 
     else:
-        st.info("Upload a video and enter a query to begin.")
+        st.info("👆 Upload a video and enter a query to begin.")
 
 
 # ============================================================================
