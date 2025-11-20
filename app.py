@@ -315,18 +315,52 @@ def read_frames_by_ids(
     Random-access read of specific video frames with detailed error tracking.
     """
     frames = []
-    cap = cv2.VideoCapture(video_path)
     
-    if not cap.isOpened():
-        logger.error(f"Cannot open video: {video_path}")
+    # Try to open video with different backends
+    backends = [
+        (cv2.CAP_FFMPEG, "FFMPEG"),
+        (cv2.CAP_ANY, "ANY"),
+    ]
+    
+    cap = None
+    successful_backend = None
+    
+    for backend, name in backends:
+        cap = cv2.VideoCapture(video_path, backend)
+        if cap.isOpened():
+            successful_backend = name
+            logger.info(f"✓ Opened video with backend: {name}")
+            break
+        else:
+            logger.warning(f"Failed to open video with backend: {name}")
+            if cap:
+                cap.release()
+    
+    if not cap or not cap.isOpened():
+        logger.error(f"Cannot open video with any backend: {video_path}")
         raise RuntimeError(f"Cannot open video {video_path}")
 
+    # Get video properties
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     video_fps = cap.get(cv2.CAP_PROP_FPS)
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    fourcc = int(cap.get(cv2.CAP_PROP_FOURCC))
     
-    logger.info(f"Video info: {width}x{height}, {video_fps} FPS, {total_frames} total frames")
+    # Decode fourcc
+    fourcc_str = "".join([chr((fourcc >> 8 * i) & 0xFF) for i in range(4)])
+    
+    logger.info(f"Video properties:")
+    logger.info(f"  - Backend: {successful_backend}")
+    logger.info(f"  - Resolution: {width}x{height}")
+    logger.info(f"  - FPS: {video_fps}")
+    logger.info(f"  - Total frames: {total_frames}")
+    logger.info(f"  - Codec (fourcc): {fourcc_str}")
+    
+    if total_frames == 0 or video_fps == 0:
+        logger.error("Video has 0 frames or 0 FPS - likely unsupported codec")
+        cap.release()
+        raise RuntimeError(f"Invalid video properties: {total_frames} frames @ {video_fps} FPS")
     
     successful = 0
     failed = 0
@@ -373,6 +407,7 @@ def read_frames_by_ids(
     
     if successful == 0:
         logger.error(f"Frame extraction completely failed: 0/{len(frame_ids)} frames read successfully")
+        logger.error(f"Video codec '{fourcc_str}' may not be supported by OpenCV on this system")
     else:
         logger.info(f"Frame extraction: {successful} successful, {failed} failed out of {len(frame_ids)}")
     
@@ -981,18 +1016,6 @@ def extract_clips_moviepy(
 def main():
     """
     Main Streamlit application entry point.
-    
-    UI Structure:
-    1. Sidebar: Configuration options
-    2. Main area: Upload, search, results
-    3. Expandable sections: Advanced features
-    
-    Workflow:
-    1. User uploads video
-    2. System extracts frames and builds embeddings (cached)
-    3. User enters search query
-    4. System finds matching frames
-    5. Optional: Generate clips, AI summary
     """
     
     # ========================================================================
@@ -1043,7 +1066,7 @@ def main():
             max_value=64,
             value=16,
             step=4,
-            help="Higher batch size = faster but uses more GPU memory"
+            help="Higher batch size = faster but uses more memory"
         )
         
         # Clip duration around matched timestamps
@@ -1067,50 +1090,80 @@ def main():
         )
 
         # Advanced options
-        with st.expander("Advanced"):
+        with st.expander("Advanced Options"):
             st.write("Embedding & index will be persisted per video hash "
                      "in a temp cache.")
+            st.write(f"**Cache location:** `{CACHE_ROOT}`")
             
             # Cache clearing button
             if st.button("🧹 Clear all cached indices"):
                 try:
                     import shutil
-                    shutil.rmtree(CACHE_ROOT)
-                    ensure_dir(CACHE_ROOT)
-                    st.success("Cache cleared.")
+                    if os.path.exists(CACHE_ROOT):
+                        shutil.rmtree(CACHE_ROOT)
+                        ensure_dir(CACHE_ROOT)
+                        st.success("✅ Cache cleared!")
+                        time.sleep(1)
+                        st.rerun()
                 except Exception as e:
-                    st.error(f"Failed to clear cache: {e}")
+                    st.error(f"❌ Failed to clear cache: {e}")
 
     # ========================================================================
     # MAIN AREA: VIDEO UPLOAD & SEARCH
     # ========================================================================
     
-    # File uploader
+    # File uploader with better instructions
+    st.markdown("### 📹 Upload Video")
+    st.info("💡 **Tip:** Use MP4 files with H.264 codec for best compatibility")
+    
     uploaded = st.file_uploader(
-        "📁 Upload a video file",
-        type=["mp4", "mov", "avi", "mkv"]
+        "Choose a video file",
+        type=["mp4", "mov", "avi", "mkv"],
+        help="Recommended: MP4 with H.264 codec. Max size depends on your Streamlit Cloud tier."
     )
     
     # Search query input
     query = st.text_input(
         "📝 Enter your search query",
-        "a person walking"
+        "a person walking",
+        help="Describe what you're looking for in the video"
     )
 
     # Process if both video and query are provided
     if uploaded and query:
-        # Save uploaded file to temporary location
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp:
+        # Save uploaded file to temporary location with proper extension
+        file_extension = os.path.splitext(uploaded.name)[1] or ".mp4"
+        
+        with tempfile.NamedTemporaryFile(delete=False, suffix=file_extension) as tmp:
             tmp.write(uploaded.read())
             video_path = tmp.name
+        
+        logger.info(f"Uploaded video saved to: {video_path}")
+        logger.info(f"Original filename: {uploaded.name}")
+        logger.info(f"File size: {os.path.getsize(video_path)} bytes")
 
         try:
             # ================================================================
-            # STEP 1: VIDEO METADATA
+            # STEP 1: VIDEO METADATA & VALIDATION
             # ================================================================
             
-            fps, w, h = read_video_meta(video_path)
-            st.write(f"**Video info:** {w}×{h} @ {fps:.2f} FPS")
+            with st.spinner("🔍 Analyzing video file..."):
+                try:
+                    fps, w, h = read_video_meta(video_path)
+                    st.success(f"✅ Video loaded: **{w}×{h}** @ **{fps:.2f} FPS**")
+                except Exception as meta_error:
+                    st.error(
+                        f"❌ Failed to read video metadata: {str(meta_error)}\n\n"
+                        f"**Possible issues:**\n"
+                        f"- Unsupported video codec\n"
+                        f"- Corrupted video file\n"
+                        f"- File format not recognized by OpenCV\n\n"
+                        f"**Suggestion:** Try converting your video to MP4 (H.264) using:\n"
+                        f"```bash\n"
+                        f"ffmpeg -i input.{file_extension} -c:v libx264 -c:a aac output.mp4\n"
+                        f"```"
+                    )
+                    raise
 
             # ================================================================
             # STEP 2: BUILD OR LOAD EMBEDDINGS
@@ -1127,15 +1180,16 @@ def main():
             t1 = time.time()
 
             st.success(
-                f"✅ Prepared {len(embeddings)} embeddings in {t1 - t0:.2f}s "
-                f"(cache key: `{cache_key[:12]}…`)."
+                f"✅ Prepared **{len(embeddings)}** embeddings in **{t1 - t0:.2f}s** "
+                f"(cache key: `{cache_key[:12]}…`)"
             )
 
             # ================================================================
             # STEP 3: SEARCH
             # ================================================================
             
-            D, I = text_search(query, index, model_name, top_k=top_k)
+            with st.spinner("🔍 Searching for matches..."):
+                D, I = text_search(query, index, model_name, top_k=top_k)
             
             # Map indices back to timestamps and frame IDs
             matched_ts = [timestamps[i] for i in I]
@@ -1147,11 +1201,16 @@ def main():
                 Image.fromarray(fr) for fr in result_frames if fr is not None
             ]
 
+            if not pil_results:
+                st.warning("⚠️ No valid frames could be retrieved for search results.")
+                return
+
             # ================================================================
             # STEP 4: DISPLAY RESULTS
             # ================================================================
             
-            st.subheader("🔎 Matches")
+            st.markdown("---")
+            st.subheader("🔎 Search Results")
             
             for rank, (score, ts, fid, fr) in enumerate(
                 zip(D, matched_ts, matched_ids, result_frames), start=1
@@ -1176,10 +1235,11 @@ def main():
             # STEP 5: STORYBOARD & HIGHLIGHTS
             # ================================================================
             
+            st.markdown("---")
             col1, col2 = st.columns(2)
             
             with col1:
-                st.subheader("🖼️ Storyboard (contact sheet)")
+                st.subheader("🖼️ Storyboard")
                 sheet = make_storyboard(
                     pil_results,
                     cols=min(3, len(pil_results)) or 1,
@@ -1188,16 +1248,16 @@ def main():
                 if sheet:
                     st.image(
                         sheet,
-                        caption="Storyboard of retrieved frames",
+                        caption="Contact sheet of all matches",
                         use_container_width=True
                     )
                 else:
                     st.info("No frames to compose.")
 
             with col2:
-                st.subheader("🎬 Merged Highlights (optional)")
-                if st.button("Build merged highlights"):
-                    with st.spinner("Creating highlight reel…"):
+                st.subheader("🎬 Video Highlights")
+                if st.button("🎬 Create Highlight Reel"):
+                    with st.spinner("Creating video clips..."):
                         clips, merged = extract_clips_moviepy(
                             video_path,
                             matched_ts,
@@ -1214,48 +1274,67 @@ def main():
             # STEP 6: INDIVIDUAL CLIPS
             # ================================================================
             
-            with st.expander("🎞️ Individual matched clips"):
-                clips, _ = extract_clips_moviepy(
-                    video_path,
-                    matched_ts,
-                    window=clip_duration
-                )
+            with st.expander("🎞️ Individual Clips"):
+                with st.spinner("Extracting clips..."):
+                    clips, _ = extract_clips_moviepy(
+                        video_path,
+                        matched_ts,
+                        window=clip_duration
+                    )
                 
-                for idx, (clip_bytes, ts) in enumerate(
-                    zip(clips, matched_ts), start=1
-                ):
-                    st.markdown(f"**Clip #{idx}** • {ts:.2f}s → {to_hms(ts)}")
-                    st.video(clip_bytes)
+                if clips:
+                    for idx, (clip_bytes, ts) in enumerate(
+                        zip(clips, matched_ts), start=1
+                    ):
+                        st.markdown(f"**Clip #{idx}** • {ts:.2f}s → {to_hms(ts)}")
+                        st.video(clip_bytes)
+                else:
+                    st.info("No clips available.")
 
             # ================================================================
             # STEP 7: AI SUMMARY
             # ================================================================
             
             with st.expander("🧠 AI Summary"):
-                if st.button("Generate summary"):
-                    with st.spinner("🤖 Summarizing…"):
+                if st.button("Generate AI Summary"):
+                    with st.spinner("🤖 Generating summary with Gemini..."):
                         summary = gemini_summary(query, pil_results, matched_ts)
-                    st.write(summary or "No summary.")
+                    st.markdown(summary or "No summary available.")
 
         except Exception as e:
-            logger.exception("Unhandled error")
-            st.error(f"❌ An error occurred: {e}")
+            logger.exception("Unhandled error in main")
+            st.error(f"❌ An error occurred: {str(e)}")
+            
+            # Show detailed error info
+            with st.expander("🔍 Error Details"):
+                st.code(str(e))
+                import traceback
+                st.code(traceback.format_exc())
             
         finally:
             # Cleanup: Remove temporary video file
-            if os.path.exists(video_path):
+            if 'video_path' in locals() and os.path.exists(video_path):
                 try:
                     os.unlink(video_path)
-                except Exception:
-                    pass
+                    logger.info(f"Cleaned up temp file: {video_path}")
+                except Exception as cleanup_error:
+                    logger.warning(f"Failed to cleanup temp file: {cleanup_error}")
 
     else:
-        st.info("Upload a video and enter a query to begin.")
+        # Show instructions when no video uploaded
+        st.markdown("---")
+        st.markdown("### 🚀 Getting Started")
+        st.markdown("""
+        1. **Upload a video** (MP4 recommended with H.264 codec)
+        2. **Enter a search query** (e.g., "person walking", "red car", "sunset")
+        3. **View results** with timestamps and similarity scores
+        4. **Generate highlights** and AI summaries
+        
+        **Supported formats:** MP4, MOV, AVI, MKV
+        
+        **Best results:** Use well-encoded H.264 MP4 files
+        """)
 
-
-# ============================================================================
-# APPLICATION ENTRY POINT
-# ============================================================================
 
 if __name__ == "__main__":
     main()
