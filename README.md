@@ -41,6 +41,7 @@ Video RAG is a powerful **Retrieval-Augmented Generation** system that enables s
 | 🎬 **Clip Extraction** | Download matched video segments |
 | 💬 **AI Summaries** | Gemini-generated contextual explanations |
 | 🗂️ **Smart Caching** | Skip re-processing for previously analyzed videos |
+| 📈 **Research Metrics** | Comprehensive evaluation metrics for academic papers |
 
 ### Advanced Features
 
@@ -48,6 +49,56 @@ Video RAG is a powerful **Retrieval-Augmented Generation** system that enables s
 - **Progress Tracking**: Real-time feedback during processing
 - **Multiple Models**: Choose between CLIP variants for different use cases
 - **Responsive UI**: Clean, intuitive interface with sidebar controls
+- **Research Evaluation**: Calculate Top-K Retrieval %, MAP, MRR, NDCG, Precision@K, Recall@K
+
+---
+
+## 📊 Research Metrics
+
+Video RAG now includes comprehensive retrieval metrics suitable for research papers and academic evaluation:
+
+### Available Metrics
+
+| Metric | Description | Use Case |
+|--------|-------------|----------|
+| **Top-K Retrieval %** | Percentage of relevant chunks found in top-K results | Primary metric for retrieval coverage |
+| **Precision@K** | Fraction of top-K results that are relevant | Measures result quality |
+| **Recall@K** | Fraction of all relevant items found in top-K | Measures completeness |
+| **Mean Average Precision (MAP)** | Average precision across all relevant positions | Overall ranking quality |
+| **Mean Reciprocal Rank (MRR)** | Inverse rank of first relevant item | Early precision metric |
+| **NDCG@K** | Normalized Discounted Cumulative Gain | Position-aware ranking quality |
+| **Avg Similarity Score** | Mean similarity of top-K results | Confidence measure |
+
+### Using Metrics
+
+1. **Enable Metrics** in the sidebar under "📊 Research Metrics"
+2. **Provide Ground Truth** (optional): Enter comma-separated frame IDs that are relevant to your query
+   - Example: `120,450,780,1200`
+3. **Run Search** as usual
+4. **View Metrics** in the expandable "📊 Retrieval Metrics" section
+5. **Export Results** as JSON or CSV for research papers
+
+### Example Usage
+
+```python
+# In the UI, enable metrics and provide ground truth
+Ground Truth Frame IDs: 120,450,780,1200
+
+# After search, view metrics:
+# 🎯 Top-K Retrieval: 75.0%
+#   - 3/4 relevant chunks found in top-5
+# 📈 Precision@5: 0.6000
+# 📊 Recall@5: 0.7500
+# ⭐ Average Precision: 0.7083
+# 🔝 Reciprocal Rank: 1.0000
+# 🏆 NDCG@5: 0.8631
+# 💯 Avg Similarity Score: 0.8543
+```
+
+### Export Formats
+
+- **JSON**: Detailed metrics with metadata, timestamps
+- **CSV**: Simple table format for Excel/analysis tools
 
 ---
 
@@ -364,9 +415,13 @@ git push origin feature/amazing-feature
 - Search surveillance footage by description
 - Incident investigation and analysis
 
-### 📊 Research
+### 📊 Research & Academia
 - Analyze video datasets semantically
 - Extract frames for annotation
+- **Evaluate retrieval algorithms** with comprehensive metrics
+- **Benchmark video search systems** with Top-K Retrieval %
+- **Generate research paper results** with exportable metrics (JSON/CSV)
+- **Compare different CLIP models** using standardized evaluation
 
 ### 🏢 Business
 - Meeting recap and highlight extraction
@@ -376,11 +431,13 @@ git push origin feature/amazing-feature
 
 ## 🚧 Roadmap
 
+- [x] Export results as JSON/CSV ✅
+- [x] Research metrics (Top-K Retrieval %, MAP, MRR, NDCG, etc.) ✅
 - [ ] Multi-video search across video library
 - [ ] Object tracking across frames
 - [ ] Audio transcription integration (Whisper)
 - [ ] OCR for on-screen text
-- [ ] Export results as JSON/CSV
+- [ ] Batch evaluation mode for research datasets
 - [ ] Docker containerization
 - [ ] REST API endpoint
 - [ ] Mobile-responsive UI
