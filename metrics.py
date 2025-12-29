@@ -295,7 +295,8 @@ class RetrievalMetrics:
         for i, idx in enumerate(retrieved_indices[:k]):
             if idx in relevant_set:
                 rel = relevance_scores.get(idx, 1.0)
-                dcg += rel / np.log2(i + 2)  # i+2 because index starts at 0
+                # i+2 because array index starts at 0, but NDCG ranks start at 1
+                dcg += rel / np.log2(i + 2)
         
         # Calculate IDCG (ideal DCG - if all relevant items were at top)
         ideal_scores = sorted(
