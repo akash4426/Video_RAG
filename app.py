@@ -14,9 +14,9 @@ A Retrieval-Augmented Generation (RAG) system for semantic video search using:
 # ============================================================================
 
 # Standard library imports
-import os
+import csv
 import io
-import cv2
+import os
 import time
 import math
 import json
@@ -27,6 +27,7 @@ import tempfile
 from typing import List, Tuple, Optional, Dict
 
 # Third-party imports for numerical computing and UI
+import cv2
 import numpy as np
 import streamlit as st
 from PIL import Image, ImageDraw, ImageFont
@@ -41,6 +42,9 @@ from moviepy.editor import VideoFileClip, concatenate_videoclips
 
 # AI summarization
 import google.generativeai as genai
+
+# Metrics for research evaluation
+from metrics import RetrievalMetrics, format_metrics_for_display
 
 
 # ============================================================================
@@ -1182,6 +1186,31 @@ def main():
             help="Number of matching frames to retrieve"
         )
 
+        # Research Metrics Configuration
+        with st.expander("📊 Research Metrics"):
+            st.write("Enable comprehensive metrics for research evaluation")
+            
+            enable_metrics = st.checkbox(
+                "Enable Metrics Calculation",
+                value=False,
+                help="Compute retrieval metrics (requires ground truth for full metrics)"
+            )
+            
+            if enable_metrics:
+                st.info(
+                    "💡 **Tip**: Provide ground truth relevant frame IDs (comma-separated) "
+                    "for complete metrics including Top-K Retrieval Percentage"
+                )
+                
+                ground_truth_input = st.text_input(
+                    "Ground Truth Frame IDs (optional)",
+                    "",
+                    help="Comma-separated frame IDs that are relevant to your query. "
+                         "Example: 120,450,780,1200"
+                )
+            else:
+                ground_truth_input = ""
+
         # Advanced options
         with st.expander("Advanced Options"):
             st.write("Embedding & index will be persisted per video hash "
@@ -1299,11 +1328,79 @@ def main():
                 return
 
             # ================================================================
+            # STEP 3.5: COMPUTE METRICS (if enabled)
+            # ================================================================
+            
+            metrics_results = None
+            if enable_metrics:
+                metrics_calculator = RetrievalMetrics()
+                
+                # Parse ground truth if provided
+                ground_truth_indices = None
+                if ground_truth_input.strip():
+                    try:
+                        ground_truth_indices = [
+                            int(x.strip()) 
+                            for x in ground_truth_input.split(',')
+                            if x.strip()
+                        ]
+                        logger.info(f"Ground truth provided: {len(ground_truth_indices)} relevant frames")
+                    except ValueError:
+                        st.warning("⚠️ Invalid ground truth format. Using format: 120,450,780")
+                        ground_truth_indices = None
+                
+                # Compute metrics
+                metrics_results = metrics_calculator.evaluate_query(
+                    retrieved_indices=I,
+                    similarity_scores=D,
+                    relevant_indices=ground_truth_indices,
+                    k=top_k
+                )
+                
+                logger.info(f"Metrics computed: {metrics_results}")
+
+            # ================================================================
             # STEP 4: DISPLAY RESULTS
             # ================================================================
             
             st.markdown("---")
             st.subheader("🔎 Search Results")
+            
+            # Display metrics if enabled
+            if enable_metrics and metrics_results:
+                with st.expander("📊 Retrieval Metrics", expanded=True):
+                    metrics_display = format_metrics_for_display(metrics_results)
+                    st.markdown(metrics_display)
+                    
+                    # Add download buttons for metrics
+                    col_json, col_csv = st.columns(2)
+                    
+                    with col_json:
+                        if st.button("📥 Export Metrics (JSON)"):
+                            metrics_json = json.dumps(metrics_results, indent=2)
+                            st.download_button(
+                                label="Download JSON",
+                                data=metrics_json,
+                                file_name=f"metrics_{time.strftime('%Y%m%d_%H%M%S')}.json",
+                                mime="application/json"
+                            )
+                    
+                    with col_csv:
+                        if st.button("📥 Export Metrics (CSV)"):
+                            output = io.StringIO()
+                            writer = csv.writer(output)
+                            writer.writerow(['Metric', 'Value'])
+                            for key, value in sorted(metrics_results.items()):
+                                writer.writerow([key, value])
+                            
+                            st.download_button(
+                                label="Download CSV",
+                                data=output.getvalue(),
+                                file_name=f"metrics_{time.strftime('%Y%m%d_%H%M%S')}.csv",
+                                mime="text/csv"
+                            )
+            
+            st.markdown("---")
             
             for rank, (score, ts, fid, fr) in enumerate(
                 zip(D, matched_ts, matched_ids, result_frames), start=1
