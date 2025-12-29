@@ -2,7 +2,7 @@
 
 <div align="center">
 
-[![Streamlit App](https://img.shields.io/badge/Streamlit-App-FF4B4B?style=for-the-badge&logo=streamlit&logoColor=white)](YOUR_DEPLOYED_APP_URL)
+[![Streamlit App](https://img.shields.io/badge/Streamlit-App-FF4B4B?style=for-the-badge&logo=streamlit&logoColor=white)](https://github.com/akash4426/Video_RAG)
 [![Python](https://img.shields.io/badge/Python-3.10+-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)](LICENSE)
 
@@ -94,8 +94,8 @@ Video RAG is a powerful **Retrieval-Augmented Generation** system that enables s
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/YOUR_USERNAME/Video-RAG.git
-cd Video-RAG
+git clone https://github.com/akash4426/Video_RAG.git
+cd Video_RAG
 
 # 2. Create virtual environment
 python -m venv venv
@@ -327,8 +327,8 @@ Contributions are welcome! Here's how you can help:
 
 ### Ways to Contribute
 
-- 🐛 **Report bugs** via [Issues](https://github.com/YOUR_USERNAME/Video-RAG/issues)
-- 💡 **Suggest features** through [Discussions](https://github.com/YOUR_USERNAME/Video-RAG/discussions)
+- 🐛 **Report bugs** via [Issues](https://github.com/akash4426/Video_RAG/issues)
+- 💡 **Suggest features** through [Discussions](https://github.com/akash4426/Video_RAG/discussions)
 - 📝 **Improve documentation**
 - 🔧 **Submit pull requests**
 
@@ -407,23 +407,23 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 **Akash Karri**
 
 - 📧 Email: akashkarri2006@gmail.com
-- 💼 LinkedIn: [Your LinkedIn](https://linkedin.com/in/YOUR_PROFILE)
-- 🐦 Twitter: [@YourTwitter](https://twitter.com/YOUR_HANDLE)
-- 🌐 Portfolio: [yourwebsite.com](https://yourwebsite.com)
+- 💼 LinkedIn: [LinkedIn Profile](https://linkedin.com/in/akash4426)
+- 🐦 GitHub: [@akash4426](https://github.com/akash4426)
+- 🌐 Portfolio: [GitHub Profile](https://github.com/akash4426)
 
 ---
 
 ## ⭐ Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=YOUR_USERNAME/Video-RAG&type=Date)](https://star-history.com/#YOUR_USERNAME/Video-RAG&Date)
+[![Star History Chart](https://api.star-history.com/svg?repos=akash4426/Video_RAG&type=Date)](https://star-history.com/#akash4426/Video_RAG&Date)
 
 ---
 
 ## 📈 Stats
 
-![GitHub stars](https://img.shields.io/github/stars/YOUR_USERNAME/Video-RAG?style=social)
-![GitHub forks](https://img.shields.io/github/forks/YOUR_USERNAME/Video-RAG?style=social)
-![GitHub watchers](https://img.shields.io/github/watchers/YOUR_USERNAME/Video-RAG?style=social)
+![GitHub stars](https://img.shields.io/github/stars/akash4426/Video_RAG?style=social)
+![GitHub forks](https://img.shields.io/github/forks/akash4426/Video_RAG?style=social)
+![GitHub watchers](https://img.shields.io/github/watchers/akash4426/Video_RAG?style=social)
 
 ---
 
@@ -433,7 +433,7 @@ Made with ❤️ by Akash Karri
 
 If you found this project helpful, consider giving it a ⭐!
 
-[Report Bug](https://github.com/YOUR_USERNAME/Video-RAG/issues) • [Request Feature](https://github.com/YOUR_USERNAME/Video-RAG/issues)
+[Report Bug](https://github.com/akash4426/Video_RAG/issues) • [Request Feature](https://github.com/akash4426/Video_RAG/issues)
 
 </div>
 
