@@ -14,9 +14,9 @@ A Retrieval-Augmented Generation (RAG) system for semantic video search using:
 # ============================================================================
 
 # Standard library imports
-import os
+import csv
 import io
-import cv2
+import os
 import time
 import math
 import json
@@ -27,6 +27,7 @@ import tempfile
 from typing import List, Tuple, Optional, Dict
 
 # Third-party imports for numerical computing and UI
+import cv2
 import numpy as np
 import streamlit as st
 from PIL import Image, ImageDraw, ImageFont
@@ -1386,10 +1387,7 @@ def main():
                     
                     with col_csv:
                         if st.button("📥 Export Metrics (CSV)"):
-                            import csv
-                            import io as io_module
-                            
-                            output = io_module.StringIO()
+                            output = io.StringIO()
                             writer = csv.writer(output)
                             writer.writerow(['Metric', 'Value'])
                             for key, value in sorted(metrics_results.items()):

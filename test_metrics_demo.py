@@ -5,6 +5,8 @@ This script demonstrates how to use the RetrievalMetrics class
 to evaluate retrieval performance.
 """
 
+import os
+import tempfile
 import numpy as np
 from metrics import RetrievalMetrics, format_metrics_for_display
 
@@ -139,10 +141,14 @@ def demo_multiple_queries():
     
     # Export to files
     print("Exporting metrics...")
-    metrics.export_to_json("/tmp/metrics_results.json")
-    metrics.export_to_csv("/tmp/metrics_results.csv")
-    print("✓ Exported to /tmp/metrics_results.json")
-    print("✓ Exported to /tmp/metrics_results.csv")
+    temp_dir = tempfile.gettempdir()
+    json_path = os.path.join(temp_dir, "metrics_results.json")
+    csv_path = os.path.join(temp_dir, "metrics_results.csv")
+    
+    metrics.export_to_json(json_path)
+    metrics.export_to_csv(csv_path)
+    print(f"✓ Exported to {json_path}")
+    print(f"✓ Exported to {csv_path}")
     
     return metrics
 

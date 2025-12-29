@@ -15,11 +15,13 @@ Metrics included:
 - Coverage and Diversity metrics
 """
 
-import numpy as np
-from typing import List, Dict, Tuple, Optional
+import csv
 import json
 import logging
 from datetime import datetime
+from typing import List, Dict, Tuple, Optional
+
+import numpy as np
 
 logger = logging.getLogger("VideoRAG.Metrics")
 
@@ -485,8 +487,6 @@ class RetrievalMetrics:
         Args:
             filepath: Path to save CSV file
         """
-        import csv
-        
         aggregate = self.get_aggregate_metrics()
         
         with open(filepath, 'w', newline='') as f:
