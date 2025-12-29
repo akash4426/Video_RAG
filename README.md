@@ -2,7 +2,7 @@
 
 <div align="center">
 
-[![Streamlit App](https://img.shields.io/badge/Streamlit-App-FF4B4B?style=for-the-badge&logo=streamlit&logoColor=white)](https://github.com/akash4426/Video_RAG)
+[![GitHub Repo](https://img.shields.io/badge/GitHub-Repository-181717?style=for-the-badge&logo=github&logoColor=white)](https://github.com/akash4426/Video_RAG)
 [![Python](https://img.shields.io/badge/Python-3.10+-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)](LICENSE)
 
@@ -408,8 +408,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 - 📧 Email: akashkarri2006@gmail.com
 - 💼 LinkedIn: [LinkedIn Profile](https://linkedin.com/in/akash4426)
-- 🐦 GitHub: [@akash4426](https://github.com/akash4426)
-- 🌐 Portfolio: [GitHub Profile](https://github.com/akash4426)
+- 🐙 GitHub: [@akash4426](https://github.com/akash4426)
 
 ---
 
