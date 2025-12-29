@@ -76,7 +76,7 @@ MODEL_CHOICES = [
 
 # Gemini model for AI summarization
 # gemini-1.5-flash: Fast multimodal model with vision capabilities
-GEMINI_MODEL = "gemini-1.5-flash"
+GEMINI_MODEL = "gemini-2.5-flash"
 
 
 # ============================================================================
